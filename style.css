@@ -211,3 +211,60 @@ body {
   justify-content: flex-end;
   margin-top: 1rem;
 }
+
+/* ===== DOWLAH'S HOME / OUTFIT INTERFACE ===== */
+
+/* Put weather, outfit suggestions, and replacement choices
+   in separate white boxes so they are easy to distinguish. */
+#screen-home .outfit-weather-panel,
+#screen-home .outfit-section,
+#screen-home #outfit-replacement-panel {
+  background-color: #ffffff;
+  border: 1px solid #dce3df;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Use the site's existing green color to highlight the weather. */
+#screen-home .outfit-weather-panel {
+  border-left: 5px solid #198754;
+}
+
+/* Leave space between each heading and the content below it. */
+#screen-home h2,
+#screen-home h3 {
+  margin-bottom: 0.6rem;
+}
+
+/* Increase the space between lines to make text easier to read. */
+#screen-home p {
+  line-height: 1.5;
+}
+
+/* Arrange clothing cards in columns that adjust to screen width.
+   JavaScript will add the clothing cards in a later step. */
+#screen-home .outfit-grid,
+#screen-home #outfit-replacement-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+/* Separate the Cancel button from the replacement choices. */
+#screen-home #outfit-cancel-replacement {
+  margin-top: 1rem;
+}
+
+/* Make confirmation messages easy to notice. */
+#screen-home #outfit-feedback {
+  margin-top: 1rem;
+  font-weight: 600;
+}
+
+/* Show which button is selected when navigating with a keyboard. */
+#screen-home button:focus-visible {
+  outline: 3px solid #198754;
+  outline-offset: 3px;
+}

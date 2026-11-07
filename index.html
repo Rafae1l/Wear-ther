@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wear-ther | Digital Closet</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
   <!-- Top Navigation (Hend will continue) -->
@@ -20,11 +22,48 @@
   <main class="main-container">
 
     <!-- HOME SCREEN (some work done) -->
+    <!-- HOME SCREEN: Dowlah's outfit suggestion interface. -->
+    <!-- Keep this ID and class so the existing navigation still works. -->
     <section id="screen-home" class="screen-view">
-      <div class="placeholder-box">
-        <h3>Home Dashboard Area</h3>
-        <p>Weather integration and outfit suggestions go here.</p>
+
+
+      <!-- Rafael's weather integration will update this information.
+        We do not show a made-up temperature. -->
+      <div class="outfit-weather-panel">
+        <h2>Today's Weather</h2>
+        <p id="outfit-weather-summary">
+          Weather is currently unavailable.
+        </p>
       </div>
+
+      <!-- This section will display the suggested clothing combination. -->
+      <div class="outfit-section">
+        <h2>Suggested Outfit</h2>
+        <p>Replace individual pieces to customize your outfit.</p>
+
+        <!-- JavaScript will add clothing cards using saved closet items.
+         Each card will include its photo, name, and Replace button. -->
+        <div id="outfit-grid" class="outfit-grid"></div>
+      </div>
+
+      <!-- This chooser stays hidden until someone clicks Replace. -->
+      <div id="outfit-replacement-panel" class="hidden">
+        <h3 id="outfit-replacement-title">Choose a replacement</h3>
+
+        <!-- JavaScript will show matching clothing categories here.
+         For example, replacing a top will show other tops. -->
+        <div id="outfit-replacement-options"></div>
+
+        <!-- Cancel will close the chooser and keep the current outfit.
+         We will connect this button in the JavaScript step. -->
+        <button id="outfit-cancel-replacement" class="primary-pill-btn" type="button">
+          Cancel
+        </button>
+      </div>
+
+      <!-- Confirmation messages will appear here after a replacement.
+       role="status" also announces updates to screen-reader users. -->
+      <p id="outfit-feedback" role="status"></p>
     </section>
 
     <section id="screen-closet" class="screen-view active">
@@ -110,4 +149,5 @@
 
   <script src="app.js"></script>
 </body>
+
 </html>

@@ -144,3 +144,83 @@ closetBtn.addEventListener("click", () => {
 
 // Initialize on first page load
 renderCloset("all");
+
+// ================= DOWLAH: OUTFIT DISPLAY PREVIEW =================
+
+// Remember each chosen clothing ID while this page is open.
+const selectedOutfitIds = {};
+
+function renderOutfitPreview() {
+  // Read clothing already saved by the closet/upload interface.
+  const closet = getStoredCloset();
+  const grid = document.getElementById("outfit-grid");
+
+  // Clear old cards so clicking Home does not create duplicates.
+  grid.replaceChildren();
+
+  // These are the three basic pieces we will display first.
+  const parts = [
+    { category: "top", label: "Top" },
+    { category: "bottom", label: "Bottom" },
+    { category: "shoes", label: "Shoes" }
+  ];
+
+  for (const part of parts) {
+    // Keep the selected item if it still belongs to this category.
+let item = closet.find(clothing =>
+  clothing.category === part.category &&
+  clothing.id === selectedOutfitIds[part.category]
+);
+
+// Without a selection, start with the first item in this category.
+// This is a preview until Rafael connects the recommendation logic.
+if (!item) {
+  item = closet.find(clothing => clothing.category === part.category);
+}
+
+// Remember the choice, or clear it when the category is empty.
+if (item) {
+  selectedOutfitIds[part.category] = item.id;
+} else {
+  delete selectedOutfitIds[part.category];
+}
+
+    // Reuse the closet card styles to keep both screens consistent.
+    const card = document.createElement("div");
+    card.className = `garment-card cat-${part.category}`;
+
+    const title = document.createElement("h3");
+    title.textContent = part.label;
+    card.appendChild(title);
+
+    if (item) {
+      // Display the image and name saved for this clothing item.
+      const image = document.createElement("img");
+      image.src = item.image;
+      image.alt = item.name;
+
+      const name = document.createElement("h4");
+      name.textContent = item.name;
+
+      // textContent shows names as plain text instead of HTML.
+      card.append(image, name);
+    } else {
+      // Give instructions when this category has no clothing.
+      const message = document.createElement("p");
+      message.textContent = "Add an item for this category in My Closet.";
+      card.appendChild(message);
+    }
+
+    grid.appendChild(card);
+  }
+
+  // Clearly label this preview until weather recommendations are connected.
+  document.getElementById("outfit-feedback").textContent =
+    "Closet preview. Weather-based outfit suggestions are not available yet.";
+}
+
+// Refresh the cards when the user returns to Home after editing their closet.
+homeBtn.addEventListener("click", renderOutfitPreview);
+
+// Prepare the cards when the page first loads.
+renderOutfitPreview();
