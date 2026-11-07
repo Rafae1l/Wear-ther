@@ -397,8 +397,26 @@ function renderOutfitPreview() {
       const name = document.createElement("h4");
       name.textContent = item.name;
 
-      // textContent shows names as plain text instead of HTML.
+      // Show this clothing item's image and name.
       card.append(image, name);
+
+      // Create a Replace button for this outfit piece.
+      const replaceButton = document.createElement("button");
+      replaceButton.type = "button";
+      replaceButton.className = "primary-pill-btn";
+      replaceButton.textContent = `Replace ${part.label}`;
+
+      // Give each button its own ID, such as "outfit-replace-top".
+      replaceButton.id = `outfit-replace-${part.category}`;
+
+      // Put the button below the clothing item's name.
+      // Open matching clothing choices when this Replace button is clicked.
+      replaceButton.addEventListener("click", () => {
+        showOutfitReplacements(part.category, part.label);
+      });
+
+      // Show the Replace button on this card.
+      card.appendChild(replaceButton);
     } else {
       // Give instructions when this category has no clothing.
       const message = document.createElement("p");
@@ -419,3 +437,95 @@ homeBtn.addEventListener("click", renderOutfitPreview);
 
 // Prepare the cards when the page first loads.
 renderOutfitPreview();
+
+// Remember which category opened the chooser.
+let outfitReplacementCategory = null;
+
+function closeOutfitReplacement(restoreFocus = true) {
+  const category = outfitReplacementCategory;
+
+  // Hide the chooser without changing the selected outfit.
+  document.getElementById("outfit-replacement-panel").classList.add("hidden");
+  document.getElementById("outfit-replacement-options").replaceChildren();
+  outfitReplacementCategory = null;
+
+  // Return keyboard focus to the original Replace button.
+  if (restoreFocus && category) {
+    document.getElementById("outfit-replace-" + category)?.focus();
+  }
+}
+
+function showOutfitReplacements(category, label) {
+  const panel = document.getElementById("outfit-replacement-panel");
+  const options = document.getElementById("outfit-replacement-options");
+  const feedback = document.getElementById("outfit-feedback");
+
+  outfitReplacementCategory = category;
+  options.replaceChildren();
+
+  document.getElementById("outfit-replacement-title").textContent =
+    "Choose a replacement: " + label;
+
+  // Show the same category, excluding the piece already being worn.
+  const alternatives = getStoredCloset().filter(item =>
+    item.category === category && item.id !== selectedOutfitIds[category]
+  );
+
+  // Explain what to do when there are no replacement options.
+  if (alternatives.length === 0) {
+    const message = document.createElement("p");
+    message.textContent =
+      "No other items in this category. Add another one in My Closet.";
+    options.appendChild(message);
+  }
+
+  alternatives.forEach(item => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "primary-pill-btn";
+    option.textContent = "Use " + item.name;
+
+    option.addEventListener("click", () => {
+      // Check that this item still exists in the correct category.
+      const replacement = getStoredCloset().find(savedItem =>
+        savedItem.id === item.id && savedItem.category === category
+      );
+
+      if (!replacement) {
+        showOutfitReplacements(category, label);
+        feedback.textContent = "That item is no longer available.";
+        return;
+      }
+
+      // Replace this category only, keeping the other pieces selected.
+      selectedOutfitIds[category] = replacement.id;
+      renderOutfitPreview();
+      closeOutfitReplacement();
+
+      // Show a confirmation using the existing status message.
+      feedback.textContent =
+        label + " updated to " + replacement.name +
+        ". This is still a closet preview.";
+    });
+
+    options.appendChild(option);
+  });
+
+  // Reveal the chooser and move keyboard focus to an available action.
+  panel.classList.remove("hidden");
+  const firstOption = options.querySelector("button");
+  const cancel = document.getElementById("outfit-cancel-replacement");
+
+  (firstOption || cancel).focus();
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// Cancel closes the chooser and keeps the current outfit.
+document.getElementById("outfit-cancel-replacement").addEventListener("click", () => {
+  closeOutfitReplacement();
+});
+
+// Close the chooser when leaving Home to edit the closet.
+closetBtn.addEventListener("click", () => {
+  closeOutfitReplacement(false);
+});
