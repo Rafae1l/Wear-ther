@@ -86,8 +86,10 @@ function saveStoredCloset(items) {
 }
 
 // Render Closet Grid
+// Render Closet Grid with enhanced micro-badges
 function renderCloset(categoryFilter = "all") {
   const grid = document.getElementById("closet-grid");
+  const countBadge = document.getElementById("closet-count-badge");
   grid.innerHTML = "";
   const items = getStoredCloset();
 
@@ -100,15 +102,27 @@ function renderCloset(categoryFilter = "all") {
     filtered = items.filter(i => i.category === categoryFilter);
   }
 
+  // Update item counter
+  if (countBadge) {
+    countBadge.innerText = `${filtered.length} ${filtered.length === 1 ? 'item' : 'items'}`;
+  }
+
   if (filtered.length === 0) {
-    grid.innerHTML = `<p style="color:#777; grid-column: 1/-1; text-align:center; padding: 2rem;">No items found in this section.</p>`;
+    grid.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding: 4rem 1rem; color: #94a3b8;">
+      <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem;">No items found in this section</p>
+      <p style="font-size: 0.85rem;">Click "+ Add Piece" above to add to your wardrobe.</p>
+    </div>`;
     return;
   }
 
   filtered.forEach(item => {
-    // Format warmth tags into clean label (e.g., "Warm, Cool, Cold")
-    const warmthText = Array.isArray(item.warmth) ? item.warmth.join(", ") : item.warmth;
     const isFav = !!item.favorite;
+    const warmthArr = Array.isArray(item.warmth) ? item.warmth : [item.warmth];
+
+    // Generate weather micro-badges
+    const badgesHtml = warmthArr
+      .map(w => `<span class="weather-badge badge-${w}">${w}</span>`)
+      .join("");
 
     const card = document.createElement("div");
     card.className = `garment-card cat-${item.category}`;
@@ -118,9 +132,11 @@ function renderCloset(categoryFilter = "all") {
         <img src="${item.image}" alt="${item.name}">
       </div>
       <div class="garment-info-box">
-        <div class="garment-name">${item.name}</div>
-        <div class="garment-subtag">${item.category} &bull; ${item.color}</div>
-        <div class="garment-weather-tags">${warmthText}</div>
+        <div class="garment-name" title="${item.name}">${item.name}</div>
+        <div class="garment-meta-row">
+          <span>${item.category}</span> &bull; <span>${item.color}</span>
+        </div>
+        <div class="garment-weather-tags">${badgesHtml}</div>
       </div>
       <div class="card-actions">
         <button class="card-btn edit-btn" onclick="openEditModal('${item.id}')">Edit</button>
