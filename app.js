@@ -92,67 +92,367 @@ function saveStoredCloset(items) {
   localStorage.setItem(CLOSET_KEY, JSON.stringify(items));
 }
 
-// Render Closet Grid
-// Render Closet Grid with enhanced micro-badges
-function renderCloset(categoryFilter = "all") {
+// ================= HEND: WARDROBE DISPLAY & BROWSING =================
+
+// Readable names for each category value saved by the upload form.
+const CATEGORY_LABELS = {
+  top: "Top",
+  bottom: "Bottom",
+  outerwear: "Outerwear",
+  shoes: "Shoes"
+};
+const CLOSET_FILTERS = ["all", "favorites", "top", "bottom", "outerwear", "shoes"];
+
+// Everything that controls what the closet grid shows right now.
+const closetView = {
+  category: "all",
+  search: "",
+  weather: "any",
+  sort: "newest"
+};
+
+// The items currently on screen, in order (used by the item viewer).
+let visibleClosetIds = [];
+
+// Older items store one weather word; newer ones store a list.
+function getWarmthList(item) {
+  if (Array.isArray(item.warmth)) return item.warmth;
+  return item.warmth ? [item.warmth] : [];
+}
+
+// Item IDs look like "item_1794015153676", so the number is when it was added.
+function getAddedTime(item) {
+  return Number(String(item.id).split("_")[1]) || 0;
+}
+
+function getCategoryLabel(category) {
+  return CATEGORY_LABELS[category] || category;
+}
+
+function matchesCategory(item, category) {
+  if (category === "all") return true;
+  if (category === "favorites") return !!item.favorite;
+  return item.category === category;
+}
+
+// Apply the category tab, search box, weather filter, and sort order.
+function getVisibleClosetItems(items) {
+  const search = closetView.search.trim().toLowerCase();
+
+  const filtered = items.filter(item => {
+    if (!matchesCategory(item, closetView.category)) return false;
+    if (closetView.weather !== "any" && !getWarmthList(item).includes(closetView.weather)) return false;
+    if (!search) return true;
+
+    const searchable = [item.name, item.color, getCategoryLabel(item.category)]
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(search);
+  });
+
+  const sorters = {
+    newest: (a, b) => getAddedTime(b) - getAddedTime(a),
+    oldest: (a, b) => getAddedTime(a) - getAddedTime(b),
+    name: (a, b) => a.name.localeCompare(b.name),
+    category: (a, b) =>
+      CLOSET_FILTERS.indexOf(a.category) - CLOSET_FILTERS.indexOf(b.category) ||
+      a.name.localeCompare(b.name)
+  };
+
+  return filtered.sort(sorters[closetView.sort] || sorters.newest);
+}
+
+// Highlight the active tab and show how many items are in each one.
+function updateCategoryTabs(items) {
+  document.querySelectorAll(".cat-tab").forEach(tab => {
+    const category = tab.dataset.category;
+    const isActive = category === closetView.category;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-pressed", String(isActive));
+
+    const countEl = tab.querySelector(".tab-count");
+    if (countEl) {
+      countEl.textContent = items.filter(item => matchesCategory(item, category)).length;
+    }
+  });
+}
+
+function filtersAreActive() {
+  return closetView.search.trim() !== "" || closetView.weather !== "any";
+}
+
+function clearClosetFilters() {
+  closetView.search = "";
+  closetView.weather = "any";
+  document.getElementById("closet-search").value = "";
+  document.getElementById("closet-weather-filter").value = "any";
+  renderCloset();
+}
+
+function createEmptyState(totalItems) {
+  const box = document.createElement("div");
+  box.className = "closet-empty-state";
+
+  const title = document.createElement("p");
+  title.className = "empty-title";
+  const hint = document.createElement("p");
+  hint.className = "empty-hint";
+  box.append(title, hint);
+
+  if (totalItems === 0) {
+    title.textContent = "Your closet is empty";
+    hint.textContent = 'Click "+ Add Piece" above to add your first item.';
+  } else if (filtersAreActive()) {
+    title.textContent = "No items match your search";
+    hint.textContent = "Try a different word or weather, or clear the filters.";
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "cancel-btn";
+    clearBtn.textContent = "Clear filters";
+    clearBtn.addEventListener("click", clearClosetFilters);
+    box.appendChild(clearBtn);
+  } else if (closetView.category === "favorites") {
+    title.textContent = "No favorites yet";
+    hint.textContent = "Tap the ★ on any item to save it here.";
+  } else {
+    title.textContent = `No ${getCategoryLabel(closetView.category).toLowerCase()} items yet`;
+    hint.textContent = 'Click "+ Add Piece" above to add one.';
+  }
+
+  return box;
+}
+
+// Build one clothing card with DOM methods, so names with quotes or
+// symbols display correctly and cannot break the page.
+function createClosetCard(item) {
+  const isFav = !!item.favorite;
+  const card = document.createElement("div");
+  card.className = `garment-card cat-${item.category}`;
+
+  const favBtn = document.createElement("button");
+  favBtn.type = "button";
+  favBtn.className = "fav-btn" + (isFav ? " is-fav" : "");
+  favBtn.textContent = "★";
+  favBtn.setAttribute("aria-pressed", String(isFav));
+  favBtn.setAttribute("aria-label", `Favorite ${item.name}`);
+  favBtn.title = isFav ? "Remove from favorites" : "Add to favorites";
+  favBtn.addEventListener("click", () => toggleFavorite(item.id));
+
+  // The photo is a button that opens a larger view of the item.
+  const imgBtn = document.createElement("button");
+  imgBtn.type = "button";
+  imgBtn.className = "garment-img-wrapper";
+  imgBtn.dataset.viewId = item.id;
+  imgBtn.setAttribute("aria-label", `View ${item.name} larger`);
+  imgBtn.title = "Click to view larger";
+  imgBtn.addEventListener("click", () => openItemViewer(item.id));
+
+  const img = document.createElement("img");
+  img.src = item.image;
+  img.alt = "";
+  img.loading = "lazy";
+  imgBtn.appendChild(img);
+
+  const info = document.createElement("div");
+  info.className = "garment-info-box";
+
+  const name = document.createElement("div");
+  name.className = "garment-name";
+  name.title = item.name;
+  name.textContent = item.name;
+
+  const meta = document.createElement("div");
+  meta.className = "garment-meta-row";
+  const categorySpan = document.createElement("span");
+  categorySpan.textContent = getCategoryLabel(item.category);
+  const colorSpan = document.createElement("span");
+  colorSpan.textContent = item.color;
+  meta.append(categorySpan, " • ", colorSpan);
+
+  const tags = document.createElement("div");
+  tags.className = "garment-weather-tags";
+  getWarmthList(item).forEach(w => {
+    const badge = document.createElement("span");
+    badge.className = `weather-badge badge-${w}`;
+    badge.textContent = w;
+    tags.appendChild(badge);
+  });
+
+  info.append(name, meta, tags);
+
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "card-btn edit-btn";
+  editBtn.textContent = "Edit";
+  editBtn.setAttribute("aria-label", `Edit ${item.name}`);
+  editBtn.addEventListener("click", () => openEditModal(item.id));
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "card-btn delete-btn";
+  removeBtn.textContent = "Remove";
+  removeBtn.setAttribute("aria-label", `Remove ${item.name}`);
+  removeBtn.addEventListener("click", () => removeItem(item.id));
+
+  actions.append(editBtn, removeBtn);
+  card.append(favBtn, imgBtn, info, actions);
+  return card;
+}
+
+// Render Closet Grid. Passing a category switches tabs; leaving it out
+// re-renders with the current tab, search, weather filter, and sort.
+function renderCloset(categoryFilter) {
+  if (CLOSET_FILTERS.includes(categoryFilter)) {
+    closetView.category = categoryFilter;
+  }
+
   const grid = document.getElementById("closet-grid");
   const countBadge = document.getElementById("closet-count-badge");
-  grid.innerHTML = "";
+  const summary = document.getElementById("closet-results-summary");
   const items = getStoredCloset();
+  const visible = getVisibleClosetItems(items);
+  visibleClosetIds = visible.map(item => item.id);
 
-  let filtered;
-  if (categoryFilter === "all") {
-    filtered = items;
-  } else if (categoryFilter === "favorites") {
-    filtered = items.filter(i => i.favorite);
-  } else {
-    filtered = items.filter(i => i.category === categoryFilter);
-  }
+  updateCategoryTabs(items);
 
-  // Update item counter
+  // The badge always shows the whole closet size.
   if (countBadge) {
-    countBadge.innerText = `${filtered.length} ${filtered.length === 1 ? 'item' : 'items'}`;
+    countBadge.textContent = `${items.length} ${items.length === 1 ? "item" : "items"}`;
   }
 
-  if (filtered.length === 0) {
-    grid.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding: 4rem 1rem; color: #94a3b8;">
-      <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem;">No items found in this section</p>
-      <p style="font-size: 0.85rem;">Click "+ Add Piece" above to add to your wardrobe.</p>
-    </div>`;
+  // The summary explains what part of the closet is being shown.
+  if (summary) {
+    const inSection = items.filter(item => matchesCategory(item, closetView.category)).length;
+    summary.textContent = filtersAreActive()
+      ? `Showing ${visible.length} of ${inSection} ${inSection === 1 ? "item" : "items"} in this section`
+      : `Showing ${visible.length} ${visible.length === 1 ? "item" : "items"}`;
+  }
+
+  grid.replaceChildren();
+
+  if (visible.length === 0) {
+    grid.appendChild(createEmptyState(items.length));
     return;
   }
 
-  filtered.forEach(item => {
-    const isFav = !!item.favorite;
-    const warmthArr = Array.isArray(item.warmth) ? item.warmth : [item.warmth];
-
-    // Generate weather micro-badges
-    const badgesHtml = warmthArr
-      .map(w => `<span class="weather-badge badge-${w}">${w}</span>`)
-      .join("");
-
-    const card = document.createElement("div");
-    card.className = `garment-card cat-${item.category}`;
-    card.innerHTML = `
-      <button class="fav-btn ${isFav ? 'is-fav' : ''}" onclick="toggleFavorite('${item.id}')" title="Toggle Favorite">★</button>
-      <div class="garment-img-wrapper">
-        <img src="${item.image}" alt="${item.name}">
-      </div>
-      <div class="garment-info-box">
-        <div class="garment-name" title="${item.name}">${item.name}</div>
-        <div class="garment-meta-row">
-          <span>${item.category}</span> &bull; <span>${item.color}</span>
-        </div>
-        <div class="garment-weather-tags">${badgesHtml}</div>
-      </div>
-      <div class="card-actions">
-        <button class="card-btn edit-btn" onclick="openEditModal('${item.id}')">Edit</button>
-        <button class="card-btn delete-btn" onclick="removeItem('${item.id}')">Remove</button>
-      </div>
-    `;
-    grid.appendChild(card);
-  });
+  visible.forEach(item => grid.appendChild(createClosetCard(item)));
 }
+
+// ---------- Item viewer: larger photo + details, with prev/next browsing ----------
+const itemViewer = document.getElementById("item-viewer");
+let viewerIds = [];
+let viewerIndex = 0;
+let viewerReturnFocusId = null;
+
+function openItemViewer(id) {
+  viewerIds = visibleClosetIds.slice();
+  viewerIndex = Math.max(0, viewerIds.indexOf(id));
+  viewerReturnFocusId = id;
+  itemViewer.classList.remove("hidden");
+  showViewerItem();
+  document.getElementById("viewer-close").focus();
+}
+
+function closeItemViewer() {
+  itemViewer.classList.add("hidden");
+  // Return focus to the photo that opened the viewer, if it is still shown.
+  const returnTo = Array.from(document.querySelectorAll("[data-view-id]"))
+    .find(btn => btn.dataset.viewId === viewerReturnFocusId);
+  if (returnTo) returnTo.focus();
+}
+
+function showViewerItem() {
+  const closet = getStoredCloset();
+  // Skip any items deleted since the viewer opened.
+  viewerIds = viewerIds.filter(id => closet.some(item => item.id === id));
+  if (viewerIds.length === 0) {
+    closeItemViewer();
+    return;
+  }
+  viewerIndex = Math.min(viewerIndex, viewerIds.length - 1);
+
+  const item = closet.find(i => i.id === viewerIds[viewerIndex]);
+  viewerReturnFocusId = item.id;
+
+  const card = itemViewer.querySelector(".viewer-card");
+  card.className = `modal-card viewer-card cat-${item.category}`;
+
+  document.getElementById("viewer-img").src = item.image;
+  document.getElementById("viewer-img").alt = item.name;
+  document.getElementById("viewer-name").textContent = item.name;
+  document.getElementById("viewer-category").textContent = getCategoryLabel(item.category);
+  document.getElementById("viewer-color").textContent = item.color;
+  document.getElementById("viewer-weather").textContent =
+    getWarmthList(item).map(w => w[0].toUpperCase() + w.slice(1)).join(", ") || "Not set";
+
+  const added = getAddedTime(item);
+  document.getElementById("viewer-added").textContent = added
+    ? new Date(added).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "Unknown";
+
+  document.getElementById("viewer-position").textContent = `${viewerIndex + 1} of ${viewerIds.length}`;
+
+  const favBtn = document.getElementById("viewer-fav");
+  favBtn.textContent = item.favorite ? "★ Favorited" : "☆ Add to favorites";
+  favBtn.setAttribute("aria-pressed", String(!!item.favorite));
+
+  const single = viewerIds.length < 2;
+  document.getElementById("viewer-prev").disabled = single;
+  document.getElementById("viewer-next").disabled = single;
+}
+
+function stepViewer(direction) {
+  if (viewerIds.length < 2) return;
+  viewerIndex = (viewerIndex + direction + viewerIds.length) % viewerIds.length;
+  showViewerItem();
+}
+
+document.getElementById("viewer-close").addEventListener("click", closeItemViewer);
+document.getElementById("viewer-prev").addEventListener("click", () => stepViewer(-1));
+document.getElementById("viewer-next").addEventListener("click", () => stepViewer(1));
+
+document.getElementById("viewer-fav").addEventListener("click", () => {
+  toggleFavorite(viewerIds[viewerIndex]);
+  showViewerItem();
+});
+
+document.getElementById("viewer-edit").addEventListener("click", () => {
+  const id = viewerIds[viewerIndex];
+  itemViewer.classList.add("hidden");
+  openEditModal(id);
+});
+
+// Clicking the dark background closes the viewer.
+itemViewer.addEventListener("click", (e) => {
+  if (e.target === itemViewer) closeItemViewer();
+});
+
+// Keyboard: Esc closes, arrow keys browse.
+document.addEventListener("keydown", (e) => {
+  if (itemViewer.classList.contains("hidden")) return;
+  if (e.key === "Escape") closeItemViewer();
+  else if (e.key === "ArrowLeft") stepViewer(-1);
+  else if (e.key === "ArrowRight") stepViewer(1);
+});
+
+// ---------- Search, weather filter, and sort controls ----------
+document.getElementById("closet-search").addEventListener("input", (e) => {
+  closetView.search = e.target.value;
+  renderCloset();
+});
+
+document.getElementById("closet-weather-filter").addEventListener("change", (e) => {
+  closetView.weather = e.target.value;
+  renderCloset();
+});
+
+document.getElementById("closet-sort").addEventListener("change", (e) => {
+  closetView.sort = e.target.value;
+  renderCloset();
+});
 
 // 3. Toggle Favorite Status
 function toggleFavorite(id) {
@@ -176,12 +476,11 @@ function removeItem(id) {
   renderCloset(activeTab);
 }
 
-// Category Tabs Filtering
+// Category Tabs Filtering: the tab is saved in the address (e.g. #closet/top)
+// so refresh and the browser Back button keep the user's place.
 document.querySelectorAll(".cat-tab").forEach(tab => {
-  tab.addEventListener("click", (e) => {
-    document.querySelectorAll(".cat-tab").forEach(t => t.classList.remove("active"));
-    e.target.classList.add("active");
-    renderCloset(e.target.dataset.category);
+  tab.addEventListener("click", () => {
+    goToRoute("closet", tab.dataset.category);
   });
 });
 
@@ -319,25 +618,62 @@ const closetBtn = document.getElementById("nav-closet-btn");
 const screenHome = document.getElementById("screen-home");
 const screenCloset = document.getElementById("screen-closet");
 
-homeBtn.addEventListener("click", () => {
-  screenHome.classList.add("active");
-  screenCloset.classList.remove("active");
-  homeBtn.classList.add("active");
-  closetBtn.classList.remove("active");
-});
+// HEND: Navigation uses the address hash (#home, #closet, #closet/shoes)
+// so Back/Forward buttons and page refresh work like a normal website.
+function goToRoute(screen, category) {
+  const hash = screen === "closet" && category && category !== "all"
+    ? `#closet/${category}`
+    : `#${screen}`;
 
-closetBtn.addEventListener("click", () => {
-  screenCloset.classList.add("active");
-  screenHome.classList.remove("active");
-  closetBtn.classList.add("active");
-  homeBtn.classList.remove("active");
+  if (location.hash === hash) {
+    applyRoute(); // Same address: just refresh the view.
+  } else {
+    location.hash = hash; // Triggers "hashchange" -> applyRoute().
+  }
+}
 
-  // Keep the highlighted closet filter consistent when returning from Home.
-  const activeTab = document.querySelector(".cat-tab.active");
-  renderCloset(activeTab ? activeTab.dataset.category : "all");
-});
+function parseRoute() {
+  const [screen, category] = location.hash.replace(/^#\/?/, "").split("/");
+  return {
+    screen: screen === "closet" ? "closet" : "home",
+    category: CLOSET_FILTERS.includes(category) ? category : "all"
+  };
+}
 
-// Initialize on first page load
+function applyRoute() {
+  const { screen, category } = parseRoute();
+  const showCloset = screen === "closet";
+
+  screenCloset.classList.toggle("active", showCloset);
+  screenHome.classList.toggle("active", !showCloset);
+  closetBtn.classList.toggle("active", showCloset);
+  homeBtn.classList.toggle("active", !showCloset);
+
+  // Tell screen readers which page is current.
+  if (showCloset) {
+    closetBtn.setAttribute("aria-current", "page");
+    homeBtn.removeAttribute("aria-current");
+  } else {
+    homeBtn.setAttribute("aria-current", "page");
+    closetBtn.removeAttribute("aria-current");
+  }
+
+  if (showCloset) {
+    renderCloset(category);
+    if (typeof closeOutfitReplacement === "function") closeOutfitReplacement(false);
+  } else if (typeof renderOutfitPreview === "function") {
+    renderOutfitPreview();
+  }
+
+  if (!itemViewer.classList.contains("hidden")) closeItemViewer();
+}
+
+homeBtn.addEventListener("click", () => goToRoute("home"));
+closetBtn.addEventListener("click", () => goToRoute("closet", closetView.category));
+window.addEventListener("hashchange", applyRoute);
+
+// Initialize the closet grid on first page load (the route is applied at the
+// bottom of this file, after the Home screen code has been set up).
 renderCloset("all");
 
 // ================= DOWLAH: OUTFIT DISPLAY PREVIEW =================
@@ -529,3 +865,6 @@ document.getElementById("outfit-cancel-replacement").addEventListener("click", (
 closetBtn.addEventListener("click", () => {
   closeOutfitReplacement(false);
 });
+
+// HEND: Show the screen named in the address (e.g. #closet/shoes) on page load.
+applyRoute();

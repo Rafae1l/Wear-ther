@@ -602,3 +602,221 @@ body {
   margin-bottom: 0.5rem;
   background-color: #ffffff;
 }
+
+/* ===== HEND'S WARDROBE DISPLAY & NAVIGATION ===== */
+
+/* Show which control is focused when using a keyboard. */
+.nav-btn:focus-visible,
+.cat-tab:focus-visible,
+.garment-card button:focus-visible,
+.closet-toolbar input:focus-visible,
+.closet-toolbar select:focus-visible,
+#item-viewer button:focus-visible {
+  outline: 3px solid #059669;
+  outline-offset: 2px;
+}
+
+/* Item count inside each category tab, e.g. "Tops 3". */
+.tab-count {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 0.3rem;
+  padding: 0 0.4rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.tab-all .tab-count { background: rgba(255, 255, 255, 0.2); }
+.tab-count:empty { display: none; }
+
+/* Search / weather / sort row */
+.closet-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin: -1rem 0 0.8rem;
+}
+
+.toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.toolbar-search {
+  flex: 1 1 240px;
+}
+
+.toolbar-field label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.closet-toolbar input,
+.closet-toolbar select {
+  padding: 0.6rem 0.85rem;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  background: #ffffff;
+  color: #1e293b;
+}
+
+.closet-results-summary {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 1rem;
+}
+
+/* Larger, clickable photos so clothing is easy to recognize. */
+.garment-img-wrapper {
+  width: 100%;
+  height: 170px;
+  border: none;
+  cursor: zoom-in;
+  transition: transform 0.15s ease;
+}
+.garment-img-wrapper:hover {
+  transform: scale(1.02);
+}
+
+/* Empty / no-results message */
+.closet-empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 3.5rem 1rem;
+  color: #64748b;
+  background: #ffffff;
+  border: 2px dashed #cbd5e1;
+  border-radius: 16px;
+}
+.closet-empty-state .empty-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 0.4rem;
+}
+.closet-empty-state .empty-hint {
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+}
+
+/* Item viewer */
+.viewer-card {
+  max-width: 520px;
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.viewer-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.viewer-img-frame {
+  flex: 1;
+  background: #ffffff;
+  border-radius: 16px;
+  height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+.viewer-img-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.viewer-arrow {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #ffffff;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #334155;
+}
+.viewer-arrow:hover:not(:disabled) {
+  background: #0f172a;
+  color: #ffffff;
+}
+.viewer-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.viewer-name {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 1.1rem 0 0.7rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.viewer-details {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+}
+.viewer-details > div {
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+}
+.viewer-details dt {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64748b;
+}
+.viewer-details dd {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1e293b;
+  text-transform: capitalize;
+}
+
+.viewer-hint {
+  text-align: center;
+  margin-top: 0.8rem;
+}
+
+/* Phone-sized screens */
+@media (max-width: 600px) {
+  .app-header {
+    padding: 0.9rem 1rem;
+  }
+  .nav-links {
+    gap: 1rem;
+  }
+  .closet-top-bar {
+    flex-wrap: wrap;
+    gap: 0.8rem;
+  }
+  .closet-toolbar .toolbar-field:not(.toolbar-search) {
+    flex: 1 1 140px;
+  }
+  .garment-img-wrapper {
+    height: 130px;
+  }
+  .viewer-img-frame {
+    height: 240px;
+  }
+  .viewer-hint {
+    display: none;
+  }
+}
