@@ -8,59 +8,65 @@
 </head>
 <body>
 
-  <!-- Top Navigation (Hend will continue) -->
+  <!-- Top Global Header -->
   <header class="app-header">
     <div class="logo">WEAR-THER</div>
     <nav class="nav-links">
-      <button id="nav-home-btn" class="nav-btn">Home</button>
-      <button id="nav-closet-btn" class="nav-btn active">My Closet</button>
+      <button id="nav-home-btn" class="nav-btn active">Home</button>
+      <button id="nav-closet-btn" class="nav-btn">My Closet</button>
     </nav>
   </header>
 
   <main class="main-container">
 
-    <!-- HOME SCREEN (some work done) -->
-    <section id="screen-home" class="screen-view">
+    <!-- HOME VIEW -->
+    <section id="screen-home" class="screen-view active">
       <div class="placeholder-box">
         <h3>Home Dashboard Area</h3>
-        <p>Weather integration and outfit suggestions go here.</p>
+        <p>Weather integration and outfit suggestions will connect here.</p>
       </div>
     </section>
 
-    <section id="screen-closet" class="screen-view active">
+    <!-- MY CLOSET VIEW -->
+    <section id="screen-closet" class="screen-view">
       <div class="closet-top-bar">
         <h2>My Closet</h2>
         <button id="open-add-modal-btn" class="primary-pill-btn">+ Add Piece</button>
       </div>
 
-      <!-- Category Filter Tabs -->
+      <!-- Category Filter Tabs + Favorites -->
       <div class="category-tabs">
-        <button class="cat-tab active" data-category="all">All</button>
-        <button class="cat-tab" data-category="top">Tops</button>
-        <button class="cat-tab" data-category="bottom">Bottoms</button>
-        <button class="cat-tab" data-category="outerwear">Outerwear</button>
-        <button class="cat-tab" data-category="shoes">Shoes</button>
+        <button class="cat-tab tab-all active" data-category="all">All</button>
+        <button class="cat-tab tab-fav" data-category="favorites">★ Favorites</button>
+        <button class="cat-tab tab-tops" data-category="top">Tops</button>
+        <button class="cat-tab tab-bottoms" data-category="bottom">Bottoms</button>
+        <button class="cat-tab tab-outerwear" data-category="outerwear">Outerwear</button>
+        <button class="cat-tab tab-shoes" data-category="shoes">Shoes</button>
       </div>
 
-      <!-- Garment Display Grid (Rendered from LocalStorage) -->
+      <!-- Clothing Grid -->
       <div id="closet-grid" class="closet-grid">
-        <!-- Dynamic clothing cards render here -->
+        <!-- Rendered dynamically from LocalStorage -->
       </div>
     </section>
 
   </main>
 
+  <!-- ADD / EDIT CLOTHING MODAL -->
   <div id="add-modal" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>Add Clothing</h3>
+        <h3 id="modal-title">Add Clothing</h3>
         <button id="close-modal-btn" class="close-x" type="button">&times;</button>
       </div>
 
       <form id="add-clothing-form">
+        <!-- Hidden input to store item ID when editing -->
+        <input type="hidden" id="edit-item-id" value="">
+
         <div class="form-group">
           <label for="item-name">Clothing Name</label>
-          <input type="text" id="item-name" placeholder="e.g., Gray Sweater" required>
+          <input type="text" id="item-name" placeholder="e.g., Blue Jeans" required>
         </div>
 
         <div class="form-group">
@@ -74,35 +80,32 @@
           </select>
         </div>
 
+        
         <div class="form-group">
           <label for="item-color">Color</label>
-          <select id="item-color" required>
-            <option value="" disabled selected>Select Color</option>
-            <option value="gray">Gray</option>
-            <option value="white">White</option>
-            <option value="black">Black</option>
-            <option value="blue">Blue</option>
-            <option value="navy">Navy</option>
-            <option value="beige">Beige</option>
-          </select>
+          <input type="text" id="item-color" placeholder="e.g., Navy Blue, Light Gray, Indigo" required>
         </div>
 
+        <!-- 2. Multiple-choice checkboxes for weather suitability -->
         <div class="form-group">
-          <label>Weather Suitability</label>
-          <div class="radio-options">
-            <label><input type="radio" name="warmth" value="warm" required> Warm</label>
-            <label><input type="radio" name="warmth" value="cool"> Cool</label>
-            <label><input type="radio" name="warmth" value="cold"> Cold</label>
+          <label>Weather Suitability (Select all that apply)</label>
+          <div class="checkbox-options">
+            <label><input type="checkbox" name="warmth" value="warm"> Warm (>65°F)</label>
+            <label><input type="checkbox" name="warmth" value="cool"> Cool (45–65°F)</label>
+            <label><input type="checkbox" name="warmth" value="cold"> Cold (&lt;45°F)</label>
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="item-image-input">Upload Photo</label>
-          <input type="file" id="item-image-input" accept="image/*" required>
+        <!-- Image file upload -->
+        <div class="form-group" id="image-upload-group">
+          <label for="item-image-input" id="item-image-label">Upload Photo</label>
+          <input type="file" id="item-image-input" accept="image/*">
+          <small id="image-edit-note" class="helper-text hidden">Leave blank to keep existing photo.</small>
         </div>
 
         <div class="modal-actions">
-          <button type="submit" class="primary-pill-btn">Save</button>
+          <button type="button" id="cancel-modal-btn" class="cancel-btn">Cancel</button>
+          <button type="submit" id="modal-submit-btn" class="save-btn">Save</button>
         </div>
       </form>
     </div>
