@@ -618,6 +618,9 @@ const closetBtn = document.getElementById("nav-closet-btn");
 const screenHome = document.getElementById("screen-home");
 const screenCloset = document.getElementById("screen-closet");
 
+// Separate outfit editing screen.
+const screenOutfit = document.getElementById("screen-outfit");
+
 // HEND: Navigation uses the address hash (#home, #closet, #closet/shoes)
 // so Back/Forward buttons and page refresh work like a normal website.
 function goToRoute(screen, category) {
@@ -635,7 +638,8 @@ function goToRoute(screen, category) {
 function parseRoute() {
   const [screen, category] = location.hash.replace(/^#\/?/, "").split("/");
   return {
-    screen: screen === "closet" ? "closet" : "home",
+    // Recognize the outfit screen as another valid address.
+    screen: ["home", "closet", "outfit"].includes(screen) ? screen : "home",
     category: CLOSET_FILTERS.includes(category) ? category : "all"
   };
 }
@@ -645,7 +649,9 @@ function applyRoute() {
   const showCloset = screen === "closet";
 
   screenCloset.classList.toggle("active", showCloset);
-  screenHome.classList.toggle("active", !showCloset);
+  // Show only the screen named in the address.
+  screenHome.classList.toggle("active", screen === "home");
+  screenOutfit.classList.toggle("active", screen === "outfit");
   closetBtn.classList.toggle("active", showCloset);
   homeBtn.classList.toggle("active", !showCloset);
 
@@ -684,15 +690,21 @@ const selectedOutfitIds = {};
 function renderOutfitPreview() {
   // Read clothing already saved by the closet/upload interface.
   const closet = getStoredCloset();
-  const grid = document.getElementById("outfit-grid");
+  // Display cards in the editor when it is open; otherwise, on Home.
+  const gridId = screenOutfit.classList.contains("active")
+    ? "outfit-edit-grid"
+    : "outfit-grid";
+
+  const grid = document.getElementById(gridId);
 
   // Clear old cards so clicking Home does not create duplicates.
   grid.replaceChildren();
 
-  // These are the three basic pieces we will display first.
+  // DOWLAH: Display the four clothing categories shown in our Figma design.
   const parts = [
     { category: "top", label: "Top" },
     { category: "bottom", label: "Bottom" },
+    { category: "outerwear", label: "Outerwear" },
     { category: "shoes", label: "Shoes" }
   ];
 
@@ -751,8 +763,11 @@ function renderOutfitPreview() {
         showOutfitReplacements(part.category, part.label);
       });
 
-      // Show the Replace button on this card.
-      card.appendChild(replaceButton);
+      // DOWLAH
+      // Show individual replacement buttons only on the editing screen.
+      if (screenOutfit.classList.contains("active")) {
+        card.appendChild(replaceButton);
+      }
     } else {
       // Give instructions when this category has no clothing.
       const message = document.createElement("p");
@@ -819,7 +834,17 @@ function showOutfitReplacements(category, label) {
     const option = document.createElement("button");
     option.type = "button";
     option.className = "primary-pill-btn";
-    option.textContent = "Use " + item.name;
+    
+    // DOWLAH
+    // Show the replacement's photo and name inside its button.
+    const optionImage = document.createElement("img");
+    optionImage.src = item.image;
+    optionImage.alt = "";
+
+    const optionName = document.createElement("span");
+    optionName.textContent = "Use " + item.name;
+
+    option.append(optionImage, optionName);
 
     option.addEventListener("click", () => {
       // Check that this item still exists in the correct category.
@@ -868,3 +893,14 @@ closetBtn.addEventListener("click", () => {
 
 // HEND: Show the screen named in the address (e.g. #closet/shoes) on page load.
 applyRoute();
+
+// Dowlah
+// Open the editor from Home.
+document.getElementById("view-edit-outfit-btn").addEventListener("click", () => {
+  goToRoute("outfit");
+});
+
+// Return from the editor to Home.
+document.getElementById("outfit-back-home").addEventListener("click", () => {
+  goToRoute("home");
+});

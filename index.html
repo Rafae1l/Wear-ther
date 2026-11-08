@@ -39,34 +39,56 @@
       <!-- This section will display the suggested clothing combination. -->
       <div class="outfit-section">
         <h2>Suggested Outfit</h2>
-        <p>Replace individual pieces to customize your outfit.</p>
+        <p>View your outfit or open the editor to swap individual pieces.</p>
 
         <!-- JavaScript will add clothing cards using saved closet items.
          Each card will include its photo, name, and Replace button. -->
         <div id="outfit-grid" class="outfit-grid"></div>
-      </div>
 
-      <!-- This chooser stays hidden until someone clicks Replace. -->
-      <div id="outfit-replacement-panel" class="hidden">
-        <h3 id="outfit-replacement-title">Choose a replacement</h3>
-
-        <!-- JavaScript will show matching clothing categories here.
-         For example, replacing a top will show other tops. -->
-        <div id="outfit-replacement-options"></div>
-
-        <!-- Cancel will close the chooser and keep the current outfit.
-         We will connect this button in the JavaScript step. -->
-        <button id="outfit-cancel-replacement" class="primary-pill-btn" type="button">
-          Cancel
+        <!-- Opens the separate outfit editing screen. -->
+        <button id="view-edit-outfit-btn" class="primary-pill-btn" type="button">
+          View / Edit Outfit →
         </button>
+
       </div>
 
-      <!-- Confirmation messages will appear here after a replacement.
-       role="status" also announces updates to screen-reader users. -->
-      <p id="outfit-feedback" role="status"></p>
     </section>
 
     <!-- MY CLOSET VIEW -->
+    <!-- Separate screen for viewing and editing the current outfit. (Dowlah's Work) -->
+    <section id="screen-outfit" class="screen-view">
+      <div class="outfit-section">
+        <button id="outfit-back-home" class="primary-pill-btn" type="button">
+          ← Back to Home
+        </button>
+
+        <h2>Today's Outfit</h2>
+        <p>Swap individual pieces using items from your closet.</p>
+
+        <!-- JavaScript will display the editable outfit here. -->
+        <div id="outfit-edit-grid" class="outfit-grid"></div>
+
+        <!-- This chooser stays hidden until someone clicks Replace. -->
+        <div id="outfit-replacement-panel" class="hidden">
+          <h3 id="outfit-replacement-title">Choose a replacement</h3>
+
+          <!-- JavaScript will show matching clothing categories here.
+         For example, replacing a top will show other tops. -->
+          <div id="outfit-replacement-options"></div>
+
+          <!-- Cancel will close the chooser and keep the current outfit.
+         We will connect this button in the JavaScript step. -->
+          <button id="outfit-cancel-replacement" class="primary-pill-btn" type="button">
+            Cancel
+          </button>
+        </div>
+
+        <!-- Confirmation messages will appear here after a replacement.
+       role="status" also announces updates to screen-reader users. -->
+        <p id="outfit-feedback" role="status"></p>
+      </div>
+    </section>
+
     <!-- MY CLOSET VIEW (Salwa's Work) -->
     <section id="screen-closet" class="screen-view">
       <div class="closet-top-bar">
@@ -79,12 +101,18 @@
 
       <!-- Category Filter Tabs + Favorites (Hend: counts are filled in by app.js) -->
       <div class="category-tabs" role="group" aria-label="Filter by category">
-        <button type="button" class="cat-tab tab-all active" data-category="all" aria-pressed="true">All <span class="tab-count"></span></button>
-        <button type="button" class="cat-tab tab-fav" data-category="favorites" aria-pressed="false">★ Favorites <span class="tab-count"></span></button>
-        <button type="button" class="cat-tab tab-tops" data-category="top" aria-pressed="false">Tops <span class="tab-count"></span></button>
-        <button type="button" class="cat-tab tab-bottoms" data-category="bottom" aria-pressed="false">Bottoms <span class="tab-count"></span></button>
-        <button type="button" class="cat-tab tab-outerwear" data-category="outerwear" aria-pressed="false">Outerwear <span class="tab-count"></span></button>
-        <button type="button" class="cat-tab tab-shoes" data-category="shoes" aria-pressed="false">Shoes <span class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-all active" data-category="all" aria-pressed="true">All <span
+            class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-fav" data-category="favorites" aria-pressed="false">★ Favorites <span
+            class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-tops" data-category="top" aria-pressed="false">Tops <span
+            class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-bottoms" data-category="bottom" aria-pressed="false">Bottoms <span
+            class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-outerwear" data-category="outerwear" aria-pressed="false">Outerwear
+          <span class="tab-count"></span></button>
+        <button type="button" class="cat-tab tab-shoes" data-category="shoes" aria-pressed="false">Shoes <span
+            class="tab-count"></span></button>
       </div>
 
       <!-- HEND: Search, weather filter, and sort for browsing the wardrobe -->
@@ -151,7 +179,7 @@
           </select>
         </div>
 
-        
+
         <div class="form-group">
           <label for="item-color">Color</label>
           <input type="text" id="item-color" placeholder="e.g., Navy Blue, Light Gray, Indigo" required>
@@ -200,10 +228,22 @@
 
       <h3 id="viewer-name" class="viewer-name"></h3>
       <dl class="viewer-details">
-        <div><dt>Category</dt><dd id="viewer-category"></dd></div>
-        <div><dt>Color</dt><dd id="viewer-color"></dd></div>
-        <div><dt>Weather</dt><dd id="viewer-weather"></dd></div>
-        <div><dt>Added</dt><dd id="viewer-added"></dd></div>
+        <div>
+          <dt>Category</dt>
+          <dd id="viewer-category"></dd>
+        </div>
+        <div>
+          <dt>Color</dt>
+          <dd id="viewer-color"></dd>
+        </div>
+        <div>
+          <dt>Weather</dt>
+          <dd id="viewer-weather"></dd>
+        </div>
+        <div>
+          <dt>Added</dt>
+          <dd id="viewer-added"></dd>
+        </div>
       </dl>
       <p class="helper-text viewer-hint">Tip: use the ← → arrow keys to browse, Esc to close.</p>
 

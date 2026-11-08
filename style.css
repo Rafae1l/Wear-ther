@@ -18,9 +18,11 @@ body {
 .screen-view {
   display: none;
 }
+
 .screen-view.active {
   display: block;
 }
+
 .hidden {
   display: none !important;
 }
@@ -170,12 +172,35 @@ body {
   transition: all 0.15s ease;
 }
 
-.tab-all { background: #1a1e4b; color: white; }
-.tab-fav { background: #ffeaa7; color: #b75500; }
-.tab-tops { background: #b8e6c4; color: #1e4620; }
-.tab-bottoms { background: #7cc3f9; color: #0b3c66; }
-.tab-outerwear { background: #cca5fc; color: #3a156e; }
-.tab-shoes { background: #ecc59f; color: #533314; }
+.tab-all {
+  background: #1a1e4b;
+  color: white;
+}
+
+.tab-fav {
+  background: #ffeaa7;
+  color: #b75500;
+}
+
+.tab-tops {
+  background: #b8e6c4;
+  color: #1e4620;
+}
+
+.tab-bottoms {
+  background: #7cc3f9;
+  color: #0b3c66;
+}
+
+.tab-outerwear {
+  background: #cca5fc;
+  color: #3a156e;
+}
+
+.tab-shoes {
+  background: #ecc59f;
+  color: #533314;
+}
 
 .cat-tab:not(.active) {
   opacity: 0.6;
@@ -206,24 +231,24 @@ body {
 }
 
 /* RESTORED SATURATED PASTEL CARD COLORS */
-.cat-top { 
-  background-color: #d7f5dd; 
-  border: 1px solid #bfe8c8; 
+.cat-top {
+  background-color: #d7f5dd;
+  border: 1px solid #bfe8c8;
 }
 
-.cat-bottom { 
-  background-color: #c5e5fc; 
-  border: 1px solid #abd9f9; 
+.cat-bottom {
+  background-color: #c5e5fc;
+  border: 1px solid #abd9f9;
 }
 
-.cat-outerwear { 
-  background-color: #e3d2fc; 
-  border: 1px solid #d1baf7; 
+.cat-outerwear {
+  background-color: #e3d2fc;
+  border: 1px solid #d1baf7;
 }
 
-.cat-shoes { 
-  background-color: #f7ddc3; 
-  border: 1px solid #ebcbb0; 
+.cat-shoes {
+  background-color: #f7ddc3;
+  border: 1px solid #ebcbb0;
 }
 
 .garment-card {
@@ -400,13 +425,25 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .modal-header {
@@ -455,7 +492,8 @@ body {
   margin-bottom: 0.4rem;
 }
 
-.form-group input[type="text"], .form-group select {
+.form-group input[type="text"],
+.form-group select {
   padding: 0.65rem 0.9rem;
   border: 1.5px solid #cbd5e1;
   border-radius: 10px;
@@ -464,7 +502,8 @@ body {
   transition: border-color 0.2s;
 }
 
-.form-group input[type="text"]:focus, .form-group select:focus {
+.form-group input[type="text"]:focus,
+.form-group select:focus {
   border-color: #10b981;
 }
 
@@ -594,7 +633,7 @@ body {
 
 /* Keep Home photos inside their cards after the closet card restyle.
    These rules apply only to the Home preview, preserving the closet design. */
-#screen-home .outfit-grid .garment-card > img {
+#screen-home .outfit-grid .garment-card>img {
   width: 100%;
   height: 180px;
   object-fit: contain;
@@ -627,8 +666,14 @@ body {
   font-size: 0.75rem;
   line-height: 1.4;
 }
-.tab-all .tab-count { background: rgba(255, 255, 255, 0.2); }
-.tab-count:empty { display: none; }
+
+.tab-all .tab-count {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.tab-count:empty {
+  display: none;
+}
 
 /* Search / weather / sort row */
 .closet-toolbar {
@@ -681,6 +726,7 @@ body {
   cursor: zoom-in;
   transition: transform 0.15s ease;
 }
+
 .garment-img-wrapper:hover {
   transform: scale(1.02);
 }
@@ -695,12 +741,14 @@ body {
   border: 2px dashed #cbd5e1;
   border-radius: 16px;
 }
+
 .closet-empty-state .empty-title {
   font-size: 1.1rem;
   font-weight: 700;
   color: #334155;
   margin-bottom: 0.4rem;
 }
+
 .closet-empty-state .empty-hint {
   font-size: 0.88rem;
   margin-bottom: 1rem;
@@ -730,6 +778,7 @@ body {
   padding: 1rem;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
+
 .viewer-img-frame img {
   max-width: 100%;
   max-height: 100%;
@@ -748,10 +797,12 @@ body {
   cursor: pointer;
   color: #334155;
 }
+
 .viewer-arrow:hover:not(:disabled) {
   background: #0f172a;
   color: #ffffff;
 }
+
 .viewer-arrow:disabled {
   opacity: 0.35;
   cursor: default;
@@ -771,11 +822,13 @@ body {
   grid-template-columns: repeat(2, 1fr);
   gap: 0.6rem;
 }
-.viewer-details > div {
+
+.viewer-details>div {
   background: rgba(255, 255, 255, 0.7);
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
 }
+
 .viewer-details dt {
   font-size: 0.7rem;
   font-weight: 700;
@@ -783,6 +836,7 @@ body {
   letter-spacing: 0.4px;
   color: #64748b;
 }
+
 .viewer-details dd {
   font-size: 0.95rem;
   font-weight: 700;
@@ -800,23 +854,211 @@ body {
   .app-header {
     padding: 0.9rem 1rem;
   }
+
   .nav-links {
     gap: 1rem;
   }
+
   .closet-top-bar {
     flex-wrap: wrap;
     gap: 0.8rem;
   }
+
   .closet-toolbar .toolbar-field:not(.toolbar-search) {
     flex: 1 1 140px;
   }
+
   .garment-img-wrapper {
     height: 130px;
   }
+
   .viewer-img-frame {
     height: 240px;
   }
+
   .viewer-hint {
     display: none;
+  }
+}
+
+/* Home: weather on the left and the outfit on the right.
+   Apply the grid only when Home is the active screen. */
+#screen-home.active {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* Let the existing chooser and feedback span both columns
+   until we move them into the outfit editing screen. */
+#screen-home>#outfit-replacement-panel,
+#screen-home>#outfit-feedback {
+  grid-column: 1 / -1;
+}
+
+/* Stack the panels on smaller screens for readability. */
+@media (max-width: 800px) {
+  #screen-home.active {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Add space between the outfit cards and the editing button. */
+#view-edit-outfit-btn {
+  display: block;
+  margin-top: 24px;
+}
+
+/* DOWLAH */
+/* Keep the editor's outfit cards in compact columns. */
+#outfit-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 260px));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+/* Prevent cards from stretching beyond their columns. */
+#outfit-edit-grid .garment-card {
+  min-width: 0;
+  padding: 1rem;
+}
+
+/* Give every clothing photo the same manageable height. */
+#outfit-edit-grid .garment-card>img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background-color: white;
+  border-radius: 10px;
+  margin: 0.75rem 0;
+}
+
+/* DOWLAH */
+/* Outfit editor: four equal columns on a wide screen. */
+#screen-outfit #outfit-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+/* Keep each card compact. */
+#screen-outfit #outfit-edit-grid>.garment-card {
+  min-width: 0;
+  padding: 1rem;
+  text-align: center;
+}
+
+/* Show the full clothing photo at a consistent size. */
+#screen-outfit #outfit-edit-grid>.garment-card>img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: white;
+  border-radius: 10px;
+  margin: 0.75rem 0;
+}
+
+/* Use two columns on smaller screens. */
+@media (max-width: 800px) {
+  #screen-outfit #outfit-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Use one column on narrow phones. */
+@media (max-width: 450px) {
+  #screen-outfit #outfit-edit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/*DOWLAH*/
+/* When the chooser is open, place it beside the current outfit. */
+#screen-outfit .outfit-section:has(#outfit-replacement-panel:not(.hidden)) {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Keep the heading, navigation, and feedback across both columns. */
+#screen-outfit .outfit-section> :not(#outfit-edit-grid):not(#outfit-replacement-panel) {
+  grid-column: 1 / -1;
+}
+
+/* Current outfit on the left. */
+#screen-outfit .outfit-section:has(#outfit-replacement-panel:not(.hidden)) #outfit-edit-grid {
+  grid-column: 1;
+  margin-top: 0;
+}
+
+/* Replacement choices on the right. */
+#screen-outfit #outfit-replacement-panel {
+  grid-column: 2;
+  padding: 1rem;
+  background: #dff7f7;
+  border-radius: 12px;
+}
+
+#screen-outfit #outfit-replacement-options {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+/* Stack the chooser below the outfit on smaller screens. */
+@media (max-width: 800px) {
+  #screen-outfit .outfit-section:has(#outfit-replacement-panel:not(.hidden)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #screen-outfit #outfit-replacement-panel {
+    grid-column: 1;
+  }
+}
+
+/*DOWLAH*/
+/* Keep Back to Home compact when the swap panel is open. */
+#screen-outfit #outfit-back-home {
+  justify-self: start;
+  width: auto;
+}
+
+/* Display replacement photos beside their names. */
+#screen-outfit #outfit-replacement-options>button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 10px;
+  text-align: left;
+}
+
+/* Keep replacement thumbnails small and show the full garment. */
+#screen-outfit #outfit-replacement-options>button>img {
+  width: 70px;
+  height: 85px;
+  flex-shrink: 0;
+  object-fit: contain;
+  background: white;
+  border-radius: 8px;
+}
+
+/*DOWLAH*/
+/* Keep Home's four outfit previews balanced in two columns. */
+#screen-home #outfit-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Stack the previews on narrow phones. */
+@media (max-width: 450px) {
+  #screen-home #outfit-grid {
+    grid-template-columns: 1fr;
   }
 }
