@@ -1062,3 +1062,53 @@ body {
     grid-template-columns: 1fr;
   }
 }
+/* ===== RAFAEL: TODAY'S WEATHER LAYOUT ===== */
+/* Center everything in the weather box. */
+#screen-home .outfit-weather-panel {
+  text-align: center;
+}
+
+/* Each piece of weather info sits on its own line. */
+#outfit-weather-summary .weather-location,
+#outfit-weather-summary .weather-condition,
+#outfit-weather-summary .weather-temp,
+#outfit-weather-summary .weather-feels,
+#outfit-weather-summary .weather-detail {
+  display: block;
+}
+
+#outfit-weather-summary .weather-location {
+  font-weight: 700;
+}
+
+/* Sky description sits directly under the location. */
+#outfit-weather-summary .weather-condition {
+  color: #475569;
+}
+
+/* Large, bold temperature. */
+#outfit-weather-summary .weather-temp {
+  font-size: 3.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-top: 0.5rem;
+  color: #0f172a;
+}
+
+#outfit-weather-summary .weather-feels {
+  color: #475569;
+  font-weight: 600;
+}
+
+/* High and low side by side. */
+#outfit-weather-summary .weather-range {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  font-weight: 700;
+  margin: 0.4rem 0 0.8rem;
+}
+
+#outfit-weather-summary .weather-detail {
+  margin-top: 0.2rem;
+}

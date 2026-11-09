@@ -125,6 +125,11 @@ function getAddedTime(item) {
   return Number(String(item.id).split("_")[1]) || 0;
 }
 
+// "all" is shown as "All weather"; the others are capitalized.
+function getWarmthText(label) {
+  return label === "all" ? "All weather" : label[0].toUpperCase() + label.slice(1);
+}
+
 function getCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category;
 }
@@ -141,7 +146,8 @@ function getVisibleClosetItems(items) {
 
   const filtered = items.filter(item => {
     if (!matchesCategory(item, closetView.category)) return false;
-    if (closetView.weather !== "any" && !getWarmthList(item).includes(closetView.weather)) return false;
+    if (closetView.weather !== "any" && !getWarmthList(item).includes(closetView.weather) &&
+      !getWarmthList(item).includes("all")) return false;
     if (!search) return true;
 
     const searchable = [item.name, item.color, getCategoryLabel(item.category)]
@@ -274,7 +280,7 @@ function createClosetCard(item) {
   getWarmthList(item).forEach(w => {
     const badge = document.createElement("span");
     badge.className = `weather-badge badge-${w}`;
-    badge.textContent = w;
+    badge.textContent = w === "all" ? "All weather" : w;
     tags.appendChild(badge);
   });
 
@@ -386,7 +392,7 @@ function showViewerItem() {
   document.getElementById("viewer-category").textContent = getCategoryLabel(item.category);
   document.getElementById("viewer-color").textContent = item.color;
   document.getElementById("viewer-weather").textContent =
-    getWarmthList(item).map(w => w[0].toUpperCase() + w.slice(1)).join(", ") || "Not set";
+    getWarmthList(item).map(getWarmthText).join(", ") || "Not set";
 
   const added = getAddedTime(item);
   document.getElementById("viewer-added").textContent = added
@@ -535,6 +541,16 @@ function openEditModal(id) {
 
   modal.classList.remove("hidden");
 }
+
+// RAFAEL: "All weather" and the specific temperatures don't combine.
+document.querySelectorAll('input[name="warmth"]').forEach(box => {
+  box.addEventListener("change", () => {
+    if (!box.checked) return;
+    document.querySelectorAll('input[name="warmth"]').forEach(other => {
+      if (other !== box && (box.value === "all" || other.value === "all")) other.checked = false;
+    });
+  });
+});
 
 // Save (Add or Update) Form Handler
 addForm.addEventListener("submit", (e) => {
@@ -687,6 +703,484 @@ renderCloset("all");
 // Remember each chosen clothing ID while this page is open.
 const selectedOutfitIds = {};
 
+// ================= RAFAEL: NATIONAL WEATHER SERVICE WEATHER =================
+// Uses the free api.weather.gov service (U.S. locations only, no API key).
+// Step 1: /points/{lat},{lon} tells us which forecast belongs to this spot.
+// Step 2: the hourly forecast gives temperature, wind, rain chance, and sky.
+
+const WEATHER_CACHE_KEY = "wearther_weather_cache";
+const WEATHER_LOCATION_KEY = "wearther_last_location";
+const WEATHER_MAX_AGE_MS = 30 * 60 * 1000; // Reuse a forecast for 30 minutes.
+const WEATHER_WINDOW_HOURS = 12;           // "Today" = the next 12 hours.
+
+const weatherState = { status: "loading", data: null, message: "", stale: false };
+
+// ----- Outfit rules: how weather conditions connect to clothing labels -----
+// Every closet piece is labeled "warm", "cool", "cold", and/or "all" (All weather).
+// These rules turn the forecast into one of those labels, then build an outfit.
+const OUTFIT_RULES = {
+  // RULE 1 - Temperature band. Uses the AVERAGE "feels like" temperature over
+  // the next 12 hours. Same ranges as the closet's weather filter.
+  //   warm: above 65°F  |  cool: 45–65°F  |  cold: below 45°F
+  bands: { coldBelow: 45, warmAbove: 65 },
+
+  // RULE 2 - "Feels like". Wind chill is applied at 50°F or colder with wind
+  // over 3 mph (the official National Weather Service wind chill formula).
+  windChillMaxTemp: 50,
+  windChillMinWind: 3,
+
+  // RULE 3 - Precipitation. Rain counts if the chance is 50%+ at any point in
+  // the window, or the forecast text mentions it. Snow/ice is checked by text.
+  rainChance: 50,
+  rainWords: /rain|shower|drizzle|thunder|storm/i,
+  snowWords: /snow|sleet|ice|flurr|freezing|wintry/i,
+
+  // RULE 4 - SAME WEATHER TYPE (strict). A piece may only be in the outfit, or
+  // be offered as a replacement, if it is labeled for today's band OR labeled
+  // "All weather". A "warm" piece (shorts) is never mixed into a "cold" outfit.
+  // Among allowed pieces, an exact label scores higher than "All weather".
+  exactLabelScore: 10,
+  allWeatherScore: 7,
+
+  // RULE 5 - Outerwear is needed when it is cool or cold, OR when it is warm but
+  // it is raining/snowing, the low "feels like" drops under 55°F, or wind gusts
+  // reach 25 mph. Otherwise the outerwear slot says none is needed.
+  outerwearWarmMinFeels: 55,
+  outerwearWarmMaxWind: 25,
+
+  // RULE 6 - Name keywords (the closet has no "waterproof" label, so the item
+  // name is used). Rain/snow favors water-resistant outerwear and boots, and
+  // open or fabric shoes are avoided. Cold weather also avoids open shoes.
+  waterproofOuter: /rain|water|shell|windbreaker|trench|anorak|parka|puffer/i,
+  wetShoes: /boot|rain|waterproof|sneaker/i,
+  badWetShoes: /sandal|slide|flip|canvas|suede|heel/i,
+  openShoes: /sandal|slide|flip/i,
+
+  // RULE 7 - Favorites get a small bonus when several outfits are equally good.
+  favoriteBonus: 1,
+
+  // RULE 8 - COLORS MUST MATCH (strict). Every pair of pieces in the outfit
+  // must match, including after a swap. Color words are read from the Color
+  // field ("Light Gray" -> gray). Two pieces match when:
+  //   - either one is a neutral (neutrals go with everything), or
+  //   - they are the same color family, or
+  //   - their families are listed as neighbors below (e.g. red + pink).
+  // Blue is treated as a neutral because of denim. A color the app doesn't
+  // recognize is not blocked.
+  colorFamilies: {
+    neutral: ["black", "white", "gray", "grey", "charcoal", "silver", "beige", "tan",
+      "cream", "ivory", "brown", "navy", "khaki", "denim", "blue"],
+    red: ["red", "maroon", "burgundy", "crimson"],
+    orange: ["orange", "rust", "coral"],
+    yellow: ["yellow", "mustard", "gold"],
+    green: ["green", "olive", "sage", "mint", "teal"],
+    purple: ["purple", "violet", "lavender", "plum"],
+    pink: ["pink", "rose", "fuchsia", "magenta"]
+  },
+  colorNeighbors: ["red|pink", "red|orange", "orange|yellow", "yellow|green", "purple|pink"]
+};
+
+function getTemperatureBand(feelsLikeF) {
+  if (feelsLikeF < OUTFIT_RULES.bands.coldBelow) return "cold";
+  if (feelsLikeF <= OUTFIT_RULES.bands.warmAbove) return "cool";
+  return "warm";
+}
+
+function calculateFeelsLike(tempF, windMph) {
+  if (tempF <= OUTFIT_RULES.windChillMaxTemp && windMph > OUTFIT_RULES.windChillMinWind) {
+    const v = Math.pow(windMph, 0.16);
+    return 35.74 + 0.6215 * tempF - 35.75 * v + 0.4275 * tempF * v;
+  }
+  return tempF;
+}
+
+// NWS wind looks like "10 mph" or "5 to 15 mph"; use the larger number.
+function parseWindMph(text) {
+  const numbers = String(text || "").match(/\d+/g);
+  return numbers ? Math.max(...numbers.map(Number)) : 0;
+}
+
+function toFahrenheit(period) {
+  return period.temperatureUnit === "C" ? period.temperature * 9 / 5 + 32 : period.temperature;
+}
+
+async function fetchNwsJson(url) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return await response.json();
+      lastError = new Error("NWS responded with status " + response.status);
+      lastError.status = response.status;
+      if (response.status < 500) throw lastError; // Retry server errors only.
+    } catch (error) {
+      lastError = error;
+      if (error.status && error.status < 500) throw error;
+    }
+  }
+  throw lastError;
+}
+
+// Turn the raw hourly forecast into the few numbers the outfit rules need.
+function summarizeForecast(points, hourly) {
+  const periods = hourly.properties.periods.slice(0, WEATHER_WINDOW_HOURS);
+  if (periods.length === 0) throw new Error("The forecast had no data.");
+
+  const hours = periods.map(period => {
+    const temp = toFahrenheit(period);
+    const wind = parseWindMph(period.windSpeed);
+    return {
+      temp,
+      wind,
+      feels: calculateFeelsLike(temp, wind),
+      rainChance: period.probabilityOfPrecipitation?.value ?? 0,
+      text: period.shortForecast || ""
+    };
+  });
+
+  const temps = hours.map(h => h.temp);
+  const feels = hours.map(h => h.feels);
+  const place = points.properties.relativeLocation?.properties;
+  const allText = hours.map(h => h.text).join(" | ");
+
+  return {
+    location: place ? `${place.city}, ${place.state}` : "Your location",
+    updated: Date.now(),
+    nowTemp: Math.round(hours[0].temp),
+    nowFeels: Math.round(hours[0].feels),
+    condition: hours[0].text,
+    high: Math.round(Math.max(...temps)),
+    low: Math.round(Math.min(...temps)),
+    avgFeels: feels.reduce((sum, t) => sum + t, 0) / feels.length,
+    lowFeels: Math.min(...feels),
+    maxWind: Math.max(...hours.map(h => h.wind)),
+    maxRainChance: Math.max(...hours.map(h => h.rainChance)),
+    rain: Math.max(...hours.map(h => h.rainChance)) >= OUTFIT_RULES.rainChance ||
+      OUTFIT_RULES.rainWords.test(allText),
+    snow: OUTFIT_RULES.snowWords.test(allText)
+  };
+}
+
+function readWeatherCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(WEATHER_CACHE_KEY));
+    return cached && cached.data ? cached : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function getBrowserPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("This browser cannot share a location."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => resolve({ lat: position.coords.latitude, lon: position.coords.longitude }),
+      error => reject(error),
+      { timeout: 10000, maximumAge: WEATHER_MAX_AGE_MS }
+    );
+  });
+}
+
+// Load the forecast. Reuses a recent one unless force is true.
+async function loadWeather(force = false) {
+  const cached = readWeatherCache();
+  if (!force && cached && Date.now() - cached.data.updated < WEATHER_MAX_AGE_MS) {
+    weatherState.status = "ready";
+    weatherState.data = cached.data;
+    weatherState.stale = false;
+    refreshWeatherUi();
+    return;
+  }
+
+  weatherState.status = "loading";
+  refreshWeatherUi();
+
+  try {
+    let position;
+    try {
+      position = await getBrowserPosition();
+      localStorage.setItem(WEATHER_LOCATION_KEY, JSON.stringify(position));
+    } catch (locationError) {
+      // Fall back to the last location that worked.
+      try {
+        position = JSON.parse(localStorage.getItem(WEATHER_LOCATION_KEY));
+      } catch (storageError) {
+        position = null;
+      }
+      if (!position) {
+        const denied = locationError && locationError.code === 1;
+        throw new Error(denied
+          ? "Location access was blocked. Allow location for this page to see your weather."
+          : "Your location could not be found.");
+      }
+    }
+
+    // The NWS wants at most 4 decimals in the coordinates.
+    const lat = position.lat.toFixed(4);
+    const lon = position.lon.toFixed(4);
+    const points = await fetchNwsJson(`https://api.weather.gov/points/${lat},${lon}`);
+    const hourly = await fetchNwsJson(points.properties.forecastHourly);
+
+    weatherState.data = summarizeForecast(points, hourly);
+    weatherState.status = "ready";
+    weatherState.stale = false;
+    try {
+      localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify({ data: weatherState.data }));
+    } catch (storageError) { /* Weather still works without saving. */ }
+  } catch (error) {
+    if (cached) {
+      // Show the older forecast, clearly marked, instead of nothing.
+      weatherState.status = "ready";
+      weatherState.data = cached.data;
+      weatherState.stale = true;
+    } else {
+      weatherState.status = "error";
+      weatherState.message = error.status === 404
+        ? "The National Weather Service only covers U.S. locations."
+        : (error.message && !/^NWS|fetch/i.test(error.message)
+          ? error.message
+          : "The National Weather Service could not be reached.");
+    }
+  }
+  refreshWeatherUi();
+}
+
+// ----- Weather + color compatibility (RULES 4 and 8) -----
+const OUTFIT_CATEGORIES = ["top", "bottom", "outerwear", "shoes"];
+
+// The weather type being dressed for, or null while no forecast is available.
+function getCurrentWeatherBand() {
+  return weatherState.status === "ready" && weatherState.data
+    ? getTemperatureBand(weatherState.data.avgFeels)
+    : null;
+}
+
+// RULE 4: labeled for this band, or labeled "All weather".
+function fitsWeather(item, band) {
+  if (!band) return true;
+  const labels = getWarmthList(item);
+  return labels.includes("all") || labels.includes(band);
+}
+
+function getColorFamily(colorText) {
+  const words = String(colorText || "").toLowerCase().split(/[^a-z]+/);
+  for (const word of words) {
+    for (const [family, names] of Object.entries(OUTFIT_RULES.colorFamilies)) {
+      if (names.includes(word)) return family;
+    }
+  }
+  return null; // Unrecognized: don't block the pairing.
+}
+
+// RULE 8
+function colorsMatch(colorA, colorB) {
+  const a = getColorFamily(colorA);
+  const b = getColorFamily(colorB);
+  if (!a || !b || a === "neutral" || b === "neutral" || a === b) return true;
+  return OUTFIT_RULES.colorNeighbors.includes(`${a}|${b}`) ||
+    OUTFIT_RULES.colorNeighbors.includes(`${b}|${a}`);
+}
+
+// Does this item's color match every piece already in the outfit?
+function matchesOutfitColors(item, otherItems) {
+  return otherItems.every(other => colorsMatch(item.color, other.color));
+}
+
+// Pieces from the closet that could replace the given category in the outfit
+// without breaking the weather or color rules.
+function getReplacementChoices(category) {
+  const closet = getStoredCloset();
+  const band = getCurrentWeatherBand();
+  const others = OUTFIT_CATEGORIES
+    .filter(c => c !== category)
+    .map(c => closet.find(item => item.id === selectedOutfitIds[c] && item.category === c))
+    .filter(Boolean);
+
+  return closet.filter(item =>
+    item.category === category &&
+    item.id !== selectedOutfitIds[category] &&
+    fitsWeather(item, band) &&
+    matchesOutfitColors(item, others));
+}
+
+// ----- Choosing the outfit from the weather -----
+function scoreClothingItem(item, band, weather) {
+  const labels = getWarmthList(item);
+  let score = labels.includes(band) ? OUTFIT_RULES.exactLabelScore : OUTFIT_RULES.allWeatherScore;
+  const name = item.name || "";
+  const wet = weather.rain || weather.snow;
+
+  if (item.category === "outerwear" && wet && OUTFIT_RULES.waterproofOuter.test(name)) score += 5;
+  if (item.category === "shoes") {
+    if (wet && OUTFIT_RULES.wetShoes.test(name)) score += 5;
+    if (wet && OUTFIT_RULES.badWetShoes.test(name)) score -= 5;
+    if (band !== "warm" && OUTFIT_RULES.openShoes.test(name)) score -= 5;
+  }
+  if (item.favorite) score += OUTFIT_RULES.favoriteBonus;
+  return score;
+}
+
+// Returns { picks, skipped, empty, explanation, band } or null when there is no weather.
+function getOutfitSuggestion(closet) {
+  if (weatherState.status !== "ready" || !weatherState.data) return null;
+
+  const w = weatherState.data;
+  const band = getTemperatureBand(w.avgFeels);
+
+  // Keep hand-picked pieces only while they still fit the weather.
+  const manual = {};
+  OUTFIT_CATEGORIES.forEach(category => {
+    const piece = closet.find(item =>
+      item.id === manualOutfitIds[category] && item.category === category);
+    if (piece && fitsWeather(piece, band)) manual[category] = piece;
+    else delete manualOutfitIds[category];
+  });
+
+  // RULE 5: does today need outerwear?
+  const warmButNeeded = band === "warm" && (
+    w.rain || w.snow ||
+    w.lowFeels < OUTFIT_RULES.outerwearWarmMinFeels ||
+    w.maxWind >= OUTFIT_RULES.outerwearWarmMaxWind);
+  const needsOuterwear = band !== "warm" || warmButNeeded;
+
+  // Candidates per category (RULE 4 filter), best-scoring first.
+  const slots = OUTFIT_CATEGORIES.map(category => {
+    let candidates;
+    if (manual[category]) {
+      candidates = [manual[category]];
+    } else if (category === "outerwear" && !needsOuterwear) {
+      candidates = [];
+    } else {
+      candidates = closet
+        .filter(item => item.category === category && fitsWeather(item, band))
+        .sort((a, b) => scoreClothingItem(b, band, w) - scoreClothingItem(a, band, w))
+        .slice(0, 12);
+    }
+    const optional = category === "outerwear" && !needsOuterwear && !manual[category];
+    return { category, candidates, optional };
+  });
+
+  // Search for the best set where every pair of colors matches (RULE 8).
+  // A filled slot is worth 100 points, so a full outfit always beats a partial one.
+  let best = { score: -Infinity, picks: {} };
+  (function search(index, chosen, score) {
+    if (index === slots.length) {
+      if (score > best.score) best = { score, picks: { ...chosen } };
+      return;
+    }
+    const slot = slots[index];
+    for (const item of slot.candidates) {
+      if (!matchesOutfitColors(item, Object.values(chosen))) continue;
+      chosen[slot.category] = item;
+      search(index + 1, chosen, score + 100 + scoreClothingItem(item, band, w));
+      delete chosen[slot.category];
+    }
+    search(index + 1, chosen, score); // Leave this slot empty.
+  })(0, {}, 0);
+
+  const picks = {};
+  const skipped = [];
+  const empty = {};
+  const notes = [];
+  slots.forEach(slot => {
+    const piece = best.picks[slot.category] || null;
+    picks[slot.category] = piece;
+    if (piece) return;
+    if (slot.optional) {
+      skipped.push(slot.category);
+      notes.push("no outerwear needed");
+      return;
+    }
+    const total = closet.filter(item => item.category === slot.category);
+    empty[slot.category] = total.length === 0 ? "none"
+      : slot.candidates.length === 0 ? "weather" : "color";
+  });
+  if (warmButNeeded && picks.outerwear) {
+    notes.push(w.rain || w.snow
+      ? "outerwear added because of precipitation"
+      : "a light layer added for the cooler or windier hours");
+  }
+
+  const feelsText = Math.round(w.avgFeels) !== w.nowTemp
+    ? `averaging ${Math.round(w.avgFeels)}°F feels-like`
+    : `around ${w.nowTemp}°F`;
+  const wet = w.snow ? ", snow likely" : w.rain ? ", rain likely" : "";
+  const explanation =
+    `Chosen for ${feelsText}${wet}: every piece is labeled "${band}" or "All weather" and the colors match` +
+    (notes.length ? ` (${notes.join("; ")})` : "") + ".";
+
+  return { picks, skipped, empty, explanation, band };
+}
+
+// ----- Showing the weather in the existing Home panel -----
+function renderWeatherSummary() {
+  const summary = document.getElementById("outfit-weather-summary");
+  summary.setAttribute("role", "status");
+  summary.replaceChildren();
+
+
+  if (weatherState.status === "loading") {
+    summary.textContent = "Loading weather from the National Weather Service…";
+    return;
+  }
+
+  if (weatherState.status === "error") {
+    summary.append(weatherState.message + " ");
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "cancel-btn";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", () => loadWeather(true));
+    summary.appendChild(retry);
+    return;
+  }
+
+  const w = weatherState.data;
+  const addBlock = (className, text) => {
+    const line = document.createElement("span");
+    line.className = className;
+    line.textContent = text;
+    summary.appendChild(line);
+    return line;
+  };
+
+  // Top to bottom: place, sky, big temperature, feels like, H/L, then details.
+  addBlock("weather-location", w.location);
+  addBlock("weather-condition", w.condition);
+  addBlock("weather-temp", `${w.nowTemp}°F`);
+  addBlock("weather-feels", `Feels like ${w.nowFeels}°F`);
+
+  const range = document.createElement("span");
+  range.className = "weather-range";
+  const high = document.createElement("span");
+  high.textContent = `H: ${w.high}°F`;
+  const low = document.createElement("span");
+  low.textContent = `L: ${w.low}°F`;
+  range.append(high, low);
+  summary.appendChild(range);
+
+  addBlock("weather-detail", `Rain chance: up to ${w.maxRainChance}%`);
+  addBlock("weather-detail", `Wind: up to ${w.maxWind} mph`);
+
+  const suggestion = getOutfitSuggestion(getStoredCloset());
+  if (suggestion) addBlock("weather-detail", `Dressing for: ${suggestion.band} weather`);
+  if (weatherState.stale) addBlock("weather-detail", "Showing an older forecast (could not refresh).");
+}
+
+function refreshWeatherUi() {
+  renderWeatherSummary();
+  renderOutfitPreview();
+}
+
+// Pieces the user swapped by hand stay put when the weather updates.
+const manualOutfitIds = {};
+
+// Refresh the forecast every 30 minutes while the page stays open.
+setInterval(() => loadWeather(true), WEATHER_MAX_AGE_MS);
+
 function renderOutfitPreview() {
   // Read clothing already saved by the closet/upload interface.
   const closet = getStoredCloset();
@@ -700,6 +1194,9 @@ function renderOutfitPreview() {
   // Clear old cards so clicking Home does not create duplicates.
   grid.replaceChildren();
 
+  // RAFAEL: Weather-based suggestion (null until the forecast has loaded).
+  const suggestion = getOutfitSuggestion(closet);
+
   // DOWLAH: Display the four clothing categories shown in our Figma design.
   const parts = [
     { category: "top", label: "Top" },
@@ -709,16 +1206,17 @@ function renderOutfitPreview() {
   ];
 
   for (const part of parts) {
-    // Keep the selected item if it still belongs to this category.
-    let item = closet.find(clothing =>
-      clothing.category === part.category &&
-      clothing.id === selectedOutfitIds[part.category]
-    );
-
-    // Without a selection, start with the first item in this category.
-    // This is a preview until Rafael connects the recommendation logic.
-    if (!item) {
-      item = closet.find(clothing => clothing.category === part.category);
+    // RAFAEL: With weather, the suggestion decides (it already includes any
+    // pieces the user swapped by hand and may say "no outerwear needed").
+    let item = null;
+    if (suggestion) {
+      item = suggestion.picks[part.category] || null;
+    } else {
+      // Without weather, keep a hand-picked piece, else the first in the category.
+      item = closet.find(clothing =>
+        clothing.category === part.category &&
+        clothing.id === manualOutfitIds[part.category]
+      ) || closet.find(clothing => clothing.category === part.category);
     }
 
     // Remember the choice, or clear it when the category is empty.
@@ -768,19 +1266,55 @@ function renderOutfitPreview() {
       if (screenOutfit.classList.contains("active")) {
         card.appendChild(replaceButton);
       }
-    } else {
-      // Give instructions when this category has no clothing.
+    } else if (suggestion && suggestion.skipped.includes(part.category)) {
+      // RAFAEL: The weather rules say this layer isn't needed today.
       const message = document.createElement("p");
-      message.textContent = "Add an item for this category in My Closet.";
+      message.textContent = `No ${part.label.toLowerCase()} needed in this weather.`;
+      card.appendChild(message);
+
+      // On the editor, still allow adding one by choice.
+      if (screenOutfit.classList.contains("active") && getReplacementChoices(part.category).length) {
+        const addButton = document.createElement("button");
+        addButton.type = "button";
+        addButton.className = "primary-pill-btn";
+        addButton.textContent = `Add ${part.label}`;
+        addButton.id = `outfit-replace-${part.category}`;
+        addButton.addEventListener("click", () => {
+          showOutfitReplacements(part.category, part.label);
+        });
+        card.appendChild(addButton);
+      }
+    } else {
+      // Give instructions when this category has nothing to show.
+      const message = document.createElement("p");
+      const reason = suggestion && suggestion.empty[part.category];
+      if (reason === "weather") {
+        message.textContent =
+          `Nothing in your ${part.label.toLowerCase()} items is labeled "${suggestion.band}" or "All weather".`;
+      } else if (reason === "color") {
+        message.textContent =
+          `No ${part.label.toLowerCase()} for this weather matches the other colors in this outfit.`;
+      } else {
+        message.textContent = "Add an item for this category in My Closet.";
+      }
       card.appendChild(message);
     }
 
     grid.appendChild(card);
   }
 
-  // Clearly label this preview until weather recommendations are connected.
-  document.getElementById("outfit-feedback").textContent =
-    "Closet preview. Weather-based outfit suggestions are not available yet.";
+  // RAFAEL: Explain why these pieces were chosen.
+  const feedbackText = document.getElementById("outfit-feedback");
+  if (suggestion) {
+    const hasManual = parts.some(part => manualOutfitIds[part.category] &&
+      manualOutfitIds[part.category] === selectedOutfitIds[part.category]);
+    feedbackText.textContent = suggestion.explanation +
+      (hasManual ? " Pieces you swapped by hand are kept." : "");
+  } else {
+    feedbackText.textContent = weatherState.status === "loading"
+      ? "Loading weather to suggest an outfit…"
+      : "Weather is unavailable, so this is a closet preview, not a suggestion.";
+  }
 }
 
 // Refresh the cards when the user returns to Home after editing their closet.
@@ -817,16 +1351,18 @@ function showOutfitReplacements(category, label) {
   document.getElementById("outfit-replacement-title").textContent =
     "Choose a replacement: " + label;
 
-  // Show the same category, excluding the piece already being worn.
-  const alternatives = getStoredCloset().filter(item =>
-    item.category === category && item.id !== selectedOutfitIds[category]
-  );
+  // RAFAEL: Only offer pieces that fit this outfit's weather (or are labeled
+  // "All weather") AND whose color matches the rest of the outfit.
+  const alternatives = getReplacementChoices(category);
 
   // Explain what to do when there are no replacement options.
   if (alternatives.length === 0) {
+    const band = getCurrentWeatherBand();
     const message = document.createElement("p");
-    message.textContent =
-      "No other items in this category. Add another one in My Closet.";
+    message.textContent = band
+      ? `No other ${label.toLowerCase()} matches this outfit's colors and is labeled "${band}" or "All weather". ` +
+        "Add one in My Closet, or label an item \"All weather\"."
+      : "No other items in this category match this outfit's colors. Add another one in My Closet.";
     options.appendChild(message);
   }
 
@@ -860,13 +1396,14 @@ function showOutfitReplacements(category, label) {
 
       // Replace this category only, keeping the other pieces selected.
       selectedOutfitIds[category] = replacement.id;
+      manualOutfitIds[category] = replacement.id; // Keep it when weather updates.
       renderOutfitPreview();
       closeOutfitReplacement();
 
       // Show a confirmation using the existing status message.
       feedback.textContent =
         label + " updated to " + replacement.name +
-        ". This is still a closet preview.";
+        ". Your choice is kept over the weather suggestion.";
     });
 
     options.appendChild(option);
@@ -893,6 +1430,9 @@ closetBtn.addEventListener("click", () => {
 
 // HEND: Show the screen named in the address (e.g. #closet/shoes) on page load.
 applyRoute();
+
+// RAFAEL: Start loading the National Weather Service forecast.
+loadWeather();
 
 // Dowlah
 // Open the editor from Home.
