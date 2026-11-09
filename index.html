@@ -50,6 +50,11 @@
           View / Edit Outfit →
         </button>
 
+        <!-- HEND: Opens the AI virtual try-on screen. -->
+        <button id="open-preview-btn" class="preview-cta-btn" type="button">
+          Preview Outfit on Me →
+        </button>
+
       </div>
 
     </section>
@@ -87,6 +92,114 @@
        role="status" also announces updates to screen-reader users. -->
         <p id="outfit-feedback" role="status"></p>
       </div>
+    </section>
+
+    <!-- HEND: VIRTUAL OUTFIT PREVIEW (AI try-on with Google Gemini) -->
+    <section id="screen-preview" class="screen-view" aria-labelledby="preview-heading">
+      <div class="preview-top-bar">
+        <h2 id="preview-heading">Virtual Outfit Preview</h2>
+        <button id="preview-back-home" class="preview-back-link" type="button">← Back to Home</button>
+      </div>
+
+      <div class="preview-board">
+        <!-- Left: the suggested outfit + the user's photo -->
+        <div class="preview-panel preview-outfit-panel">
+          <h3>Selected Outfit</h3>
+          <div class="preview-outfit-body">
+            <ul id="preview-outfit-list" class="preview-outfit-list"></ul>
+
+            <div class="preview-photo-slot">
+              <!-- Shown when there is no photo yet -->
+              <label id="preview-upload-label" for="preview-photo-input" class="preview-upload-box">
+                <span class="preview-upload-icon" aria-hidden="true">＋</span>
+                <span>Upload Your Photo</span>
+              </label>
+
+              <!-- Shown once a photo is saved -->
+              <div id="preview-photo-frame" class="preview-photo-frame hidden">
+                <img id="preview-photo-img" src="" alt="Your photo">
+                <div class="preview-photo-actions">
+                  <label for="preview-photo-input" class="preview-mini-btn">Change</label>
+                  <button id="preview-photo-remove" class="preview-mini-btn" type="button">Remove</button>
+                </div>
+              </div>
+
+              <input type="file" id="preview-photo-input" class="visually-hidden" accept="image/*">
+            </div>
+          </div>
+          <p class="helper-text preview-privacy">
+            Use a clear, full-body photo, standing and facing the camera. It is saved only in
+            this browser and is sent to the AI service (see AI settings) only when you click
+            Generate Preview.
+          </p>
+        </div>
+
+        <!-- Right: the AI-generated result -->
+        <div class="preview-panel preview-result-panel">
+          <h3>Generated Preview</h3>
+          <div id="preview-result-stage" class="preview-result-stage" aria-live="polite">
+            <div id="preview-result-placeholder" class="preview-result-placeholder">
+              <span id="preview-result-icon" class="preview-person-icon" aria-hidden="true"></span>
+              <p id="preview-result-message">Upload a full-body photo to preview this outfit.</p>
+            </div>
+            <img id="preview-result-img" class="preview-result-img hidden" src="" alt="">
+          </div>
+          <p id="preview-result-caption" class="preview-result-caption hidden"></p>
+          <a id="preview-download" class="preview-mini-btn preview-download hidden" href="#" download="wearther-preview.png">Download image</a>
+        </div>
+      </div>
+
+      <button id="preview-generate-btn" class="primary-pill-btn preview-generate-btn" type="button" disabled>
+        Generate Preview →
+      </button>
+
+      <!-- Which AI service makes the preview (settings stored only in this browser) -->
+      <details id="preview-settings" class="preview-settings">
+        <summary>AI settings</summary>
+
+        <fieldset class="preview-provider">
+          <legend>Which AI makes the preview?</legend>
+          <label>
+            <input type="radio" name="preview-provider" value="huggingface" checked>
+            <span><strong>Hugging Face (free)</strong>: dresses each piece in turn (top, bottom, jacket, then shoes). Takes about a minute; has a daily free limit.</span>
+          </label>
+          <label>
+            <input type="radio" name="preview-provider" value="gemini">
+            <span><strong>Google Gemini (paid)</strong>: dresses the whole outfit, including shoes. Needs an API key with billing turned on.</span>
+          </label>
+        </fieldset>
+
+        <div id="preview-hf-settings">
+          <p class="helper-text">
+            Works without an account. Free use has a daily limit; to raise it, create a free
+            Hugging Face account and paste a "Read" access token from
+            <strong>huggingface.co/settings/tokens</strong> (optional).
+          </p>
+          <form id="preview-hf-form" class="preview-key-form">
+            <label for="preview-hf-input" class="visually-hidden">Hugging Face token (optional)</label>
+            <input type="password" id="preview-hf-input" placeholder="Optional: hf_..." autocomplete="off">
+            <button type="submit" class="save-btn">Save token</button>
+            <button type="button" id="preview-hf-remove" class="cancel-btn">Remove</button>
+          </form>
+          <p id="preview-hf-status" class="helper-text" role="status"></p>
+        </div>
+
+        <div id="preview-gemini-settings" class="hidden">
+          <p class="helper-text">
+            Paste your API key from <strong>aistudio.google.com/apikey</strong>. Gemini image
+            generation is not free (about $0.03 per image).
+          </p>
+          <form id="preview-key-form" class="preview-key-form">
+            <label for="preview-key-input" class="visually-hidden">Gemini API key</label>
+            <input type="password" id="preview-key-input" placeholder="Paste your Gemini API key" autocomplete="off">
+            <button type="submit" class="save-btn">Save key</button>
+            <button type="button" id="preview-key-remove" class="cancel-btn">Remove</button>
+          </form>
+          <p id="preview-key-status" class="helper-text" role="status"></p>
+        </div>
+
+        <p class="helper-text">Keys and tokens are saved only in this browser. Never commit them to GitHub.</p>
+      </details>
     </section>
 
     <!-- MY CLOSET VIEW (Salwa's Work) -->

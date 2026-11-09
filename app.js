@@ -637,6 +637,9 @@ const screenCloset = document.getElementById("screen-closet");
 // Separate outfit editing screen.
 const screenOutfit = document.getElementById("screen-outfit");
 
+// HEND: AI virtual try-on screen.
+const screenPreview = document.getElementById("screen-preview");
+
 // HEND: Navigation uses the address hash (#home, #closet, #closet/shoes)
 // so Back/Forward buttons and page refresh work like a normal website.
 function goToRoute(screen, category) {
@@ -655,7 +658,7 @@ function parseRoute() {
   const [screen, category] = location.hash.replace(/^#\/?/, "").split("/");
   return {
     // Recognize the outfit screen as another valid address.
-    screen: ["home", "closet", "outfit"].includes(screen) ? screen : "home",
+    screen: ["home", "closet", "outfit", "preview"].includes(screen) ? screen : "home",
     category: CLOSET_FILTERS.includes(category) ? category : "all"
   };
 }
@@ -668,6 +671,7 @@ function applyRoute() {
   // Show only the screen named in the address.
   screenHome.classList.toggle("active", screen === "home");
   screenOutfit.classList.toggle("active", screen === "outfit");
+  screenPreview.classList.toggle("active", screen === "preview");
   closetBtn.classList.toggle("active", showCloset);
   homeBtn.classList.toggle("active", !showCloset);
 
@@ -685,6 +689,11 @@ function applyRoute() {
     if (typeof closeOutfitReplacement === "function") closeOutfitReplacement(false);
   } else if (typeof renderOutfitPreview === "function") {
     renderOutfitPreview();
+  }
+
+  // HEND: The try-on screen reads the outfit chosen above.
+  if (screen === "preview" && typeof renderVirtualPreview === "function") {
+    renderVirtualPreview();
   }
 
   if (!itemViewer.classList.contains("hidden")) closeItemViewer();
@@ -1173,6 +1182,8 @@ function renderWeatherSummary() {
 function refreshWeatherUi() {
   renderWeatherSummary();
   renderOutfitPreview();
+  // HEND: Keep the try-on screen's outfit list in sync with the weather pick.
+  if (screenPreview.classList.contains("active")) renderVirtualPreview();
 }
 
 // Pieces the user swapped by hand stay put when the weather updates.
@@ -1427,6 +1438,863 @@ document.getElementById("outfit-cancel-replacement").addEventListener("click", (
 closetBtn.addEventListener("click", () => {
   closeOutfitReplacement(false);
 });
+
+// ================= HEND: VIRTUAL OUTFIT PREVIEW (AI try-on) =================
+// The user uploads one full-body photo (saved in this browser). When they click
+// Generate Preview, we send that photo plus the photos of the suggested outfit
+// pieces to an AI service, which returns a picture of them wearing the outfit.
+//   - Hugging Face (default, free): open-source try-on models, one piece at a time.
+//   - Google Gemini (paid): whole outfit in one request; needs a key with billing.
+
+const USER_PHOTO_KEY = "wearther_user_photo";
+const PREVIEW_RESULT_KEY = "wearther_outfit_preview";
+const GEMINI_KEY_STORAGE = "wearther_gemini_api_key";
+const PREVIEW_PROVIDER_KEY = "wearther_preview_provider";
+const HF_TOKEN_KEY = "wearther_hf_token";
+
+// Gradio's official JavaScript client, loaded only when a free preview is made.
+const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
+const HF_STEP_TIMEOUT_MS = 180000; // Includes time waiting in the free queue.
+
+// Free try-on demos on Hugging Face, best first. If one is down, the next is tried.
+// Tops and outerwear: IDM-VTON gives the cleanest results (Nymbo's is a copy of it).
+const HF_UPPER_BODY_SERVICES = [
+  { space: "yisol/IDM-VTON", kind: "idm" },
+  { space: "Nymbo/Virtual-Try-On", kind: "idm" },
+  { space: "levihsu/OOTDiffusion", kind: "ootd-upper" }
+];
+// Bottoms: only OOTDiffusion supports lower-body clothing.
+const HF_LOWER_BODY_SERVICES = [
+  { space: "levihsu/OOTDiffusion", kind: "ootd-lower" }
+];
+// Shoes: try-on models don't do shoes, so we use general image editors that take
+// several pictures ("put the shoes from image 2 on the person in image 1").
+// FLUX.2 is first because it uses the least free GPU time (~65s with 20 steps).
+const HF_SHOE_SERVICES = [
+  { space: "black-forest-labs/FLUX.2-dev", kind: "flux2-edit" },
+  { space: "Qwen/Qwen-Image-Edit-2511", kind: "qwen-edit" },
+  { space: "Qwen/Qwen-Image-Edit-2509", kind: "qwen-edit" }
+];
+const SHOE_EDIT_PROMPT =
+  "Image 1 shows a person. Image 2 shows a pair of shoes. Edit image 1 so the person is " +
+  "wearing the shoes from image 2, with the same color, style and details. Keep everything " +
+  "else in image 1 exactly the same: face, hair, body, pose, clothing, background, lighting and framing.";
+
+// Order the pieces are put on (shoes last, on the finished outfit).
+const HF_DRESSING_ORDER = ["top", "bottom", "outerwear", "shoes"];
+
+// Gemini image model ("Nano Banana"). Change here if Google renames it.
+const GEMINI_IMAGE_MODEL = "gemini-nano-banana-2.1";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_TIMEOUT_MS = 120000;
+
+// Keep images small enough for localStorage and fast to upload.
+const USER_PHOTO_MAX_PX = 1024;
+const GARMENT_MAX_PX = 768;
+const RESULT_MAX_PX = 1024;
+
+const previewState = {
+  status: "idle",   // idle | generating | error
+  error: "",
+  progress: "",     // e.g. "Step 1 of 3: putting on Black T-shirt…"
+  result: null,     // { image, note, outfitKey, photoStamp, createdAt }
+  photoStamp: ""    // changes whenever a new photo is uploaded
+};
+
+// ---------- Small storage helpers (never crash if storage is full/blocked) ----------
+function readStorage(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeStorage(key, value) {
+  try { localStorage.setItem(key, value); return true; } catch { return false; }
+}
+function removeStorage(key) {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+function getUserPhoto() {
+  const raw = readStorage(USER_PHOTO_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; } // { image, stamp }
+}
+
+function getGeminiKey() {
+  return (readStorage(GEMINI_KEY_STORAGE) || "").trim();
+}
+
+// ---------- Image helpers ----------
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not read that image."));
+    img.src = src;
+  });
+}
+
+// Shrink an image to fit maxPx and return a JPEG data URL. Transparent
+// areas (common in clothing cut-outs) become white instead of black.
+async function resizeToJpeg(src, maxPx, quality = 0.85) {
+  const img = await loadImage(src);
+  const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function splitDataUrl(dataUrl) {
+  const match = /^data:([^;]+);base64,(.*)$/.exec(dataUrl);
+  return match ? { mimeType: match[1], data: match[2] } : null;
+}
+
+// ---------- The outfit being previewed ----------
+// Uses the pieces chosen on Home (weather suggestion + any manual swaps).
+function getPreviewOutfit() {
+  const closet = getStoredCloset();
+  return OUTFIT_CATEGORIES
+    .map(category => closet.find(item => item.id === selectedOutfitIds[category]))
+    .filter(Boolean);
+}
+
+function getOutfitKey(outfit) {
+  return outfit.map(item => item.id).join("|");
+}
+
+// ---------- Gemini request ----------
+function buildTryOnPrompt(outfit) {
+  const list = outfit
+    .map((item, i) => `Image ${i + 2}: ${getCategoryLabel(item.category).toLowerCase()} – "${item.name}" (${item.color})`)
+    .join("\n");
+
+  return [
+    "Virtual try-on.",
+    "Image 1 is a photo of a person. The other images are clothing items from their own closet:",
+    list,
+    "",
+    "Create one realistic, full-body photo of the SAME person from image 1 wearing exactly these clothing items.",
+    "Keep their face, hair, skin tone, body shape and pose the same.",
+    "Keep each clothing item's color, pattern and style the same as in its photo.",
+    "Replace whatever they are currently wearing with these items. Do not add other clothing, accessories, logos or text.",
+    "Use a plain, light studio background with soft, natural lighting."
+  ].join("\n");
+}
+
+class PreviewError extends Error {
+  constructor(message, { canFallback = false } = {}) {
+    super(message);
+    this.canFallback = canFallback;
+  }
+}
+
+// Turn an HTTP error into a message a user can act on.
+async function toPreviewError(response) {
+  let detail = "";
+  try {
+    const body = await response.json();
+    detail = (body.error && body.error.message) || "";
+  } catch { /* not JSON */ }
+
+  const keyProblem = /api key|API_KEY|permission|unauthori[sz]ed/i.test(detail);
+  if (response.status === 401 || response.status === 403 || (response.status === 400 && keyProblem)) {
+    return new PreviewError("Gemini did not accept the API key. Check the key under \"Gemini API key\" below.");
+  }
+  if (response.status === 429) {
+    // Gemini's image models have NO free tier: a free key gets a quota of 0,
+    // so every request fails with 429 no matter how long you wait.
+    const noFreeQuota = /limit:\s*0\b|free[_ ]?tier|billing/i.test(detail);
+    if (noFreeQuota) {
+      return new PreviewError(
+        "This API key has no quota for Gemini image generation. Google does not offer image " +
+        "generation on the free tier, so billing must be turned on for the key's project in " +
+        "Google AI Studio (about $0.03–$0.07 per image)."
+      );
+    }
+    return new PreviewError(
+      "Gemini says this key is over its usage limit. If this keeps happening, the key's project " +
+      "probably needs billing turned on in Google AI Studio (image generation is not free)." +
+      (detail ? ` Google's message: "${detail.slice(0, 200)}"` : "")
+    );
+  }
+  // Other errors (e.g. endpoint not available) may work with the older endpoint.
+  return new PreviewError(
+    `Gemini returned an error (${response.status})${detail ? ": " + detail : "."}`,
+    { canFallback: response.status === 400 || response.status === 404 || response.status >= 500 }
+  );
+}
+
+// Look through any Gemini response shape for the first returned image.
+// Handles the Interactions API (type: "image", data) and generateContent
+// (inlineData / inline_data { mimeType, data }).
+function findGeminiImage(node) {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findGeminiImage(child);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const inline = node.inlineData || node.inline_data;
+  if (inline && inline.data) {
+    return { mimeType: inline.mimeType || inline.mime_type || "image/png", data: inline.data };
+  }
+  if (node.type === "image" && typeof node.data === "string" && node.data.length > 100) {
+    return { mimeType: node.mime_type || node.mimeType || "image/png", data: node.data };
+  }
+
+  for (const value of Object.values(node)) {
+    if (value && typeof value === "object") {
+      const found = findGeminiImage(value);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// If no image came back, explain why (usually a safety block or a text-only reply).
+function explainMissingImage(body) {
+  const block = body && body.promptFeedback && body.promptFeedback.blockReason;
+  const finish = body && body.candidates && body.candidates[0] && body.candidates[0].finishReason;
+  if (block || /SAFETY|PROHIBITED|BLOCK/i.test(finish || "")) {
+    return "Gemini declined to create this image. Try a different photo (clear, full-body, fully clothed).";
+  }
+  return "Gemini replied without an image. Please try again, or try a different photo.";
+}
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new PreviewError("Gemini took too long to respond. Please try again.");
+    }
+    // Network/CORS problem: the older endpoint may still work.
+    throw new PreviewError("Could not reach Google Gemini. Check your internet connection.", { canFallback: true });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Newer Gemini "Interactions" endpoint (current Google docs).
+async function requestViaInteractions(apiKey, prompt, images) {
+  const response = await fetchWithTimeout(`${GEMINI_API_BASE}/interactions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+      "Api-Revision": "2026-05-20"
+    },
+    body: JSON.stringify({
+      model: GEMINI_IMAGE_MODEL,
+      input: [
+        { type: "text", text: prompt },
+        ...images.map(img => ({ type: "image", mime_type: img.mimeType, data: img.data }))
+      ],
+      response_format: { type: "image", aspect_ratio: "3:4" }
+    })
+  });
+  if (!response.ok) throw await toPreviewError(response);
+  return response.json();
+}
+
+// Older, widely supported "generateContent" endpoint (used as a fallback).
+async function requestViaGenerateContent(apiKey, prompt, images) {
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: prompt },
+          ...images.map(img => ({ inline_data: { mime_type: img.mimeType, data: img.data } }))
+        ]
+      }],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { aspectRatio: "3:4" }
+      }
+    })
+  });
+  if (!response.ok) throw await toPreviewError(response);
+  return response.json();
+}
+
+async function generateTryOnImage(apiKey, userPhoto, outfit) {
+  // Person first, then each clothing item (all resized to keep the upload small).
+  const images = [splitDataUrl(userPhoto.image)];
+  for (const item of outfit) {
+    images.push(splitDataUrl(await resizeToJpeg(item.image, GARMENT_MAX_PX)));
+  }
+  const prompt = buildTryOnPrompt(outfit);
+
+  let body;
+  try {
+    body = await requestViaInteractions(apiKey, prompt, images);
+  } catch (err) {
+    if (!(err instanceof PreviewError) || !err.canFallback) throw err;
+    body = await requestViaGenerateContent(apiKey, prompt, images);
+  }
+
+  const image = findGeminiImage(body);
+  if (!image) throw new PreviewError(explainMissingImage(body));
+  return { image: `data:${image.mimeType};base64,${image.data}`, note: "" };
+}
+
+// ---------- Hugging Face (free) ----------
+function getPreviewProvider() {
+  return readStorage(PREVIEW_PROVIDER_KEY) === "gemini" ? "gemini" : "huggingface";
+}
+
+function getHfToken() {
+  return (readStorage(HF_TOKEN_KEY) || "").trim();
+}
+
+function dataUrlToBlob(dataUrl) {
+  const parts = splitDataUrl(dataUrl);
+  const bytes = atob(parts.data);
+  const array = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) array[i] = bytes.charCodeAt(i);
+  return new Blob([array], { type: parts.mimeType });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new PreviewError("Could not read the generated image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+let gradioClientPromise = null;
+function loadGradioClient() {
+  if (!gradioClientPromise) {
+    gradioClientPromise = import(GRADIO_CLIENT_URL).catch(() => {
+      gradioClientPromise = null; // Allow another try later.
+      throw new PreviewError("Could not load the Hugging Face connector. Check your internet connection.");
+    });
+  }
+  return gradioClientPromise;
+}
+
+// Each demo has its own inputs; this builds the request for one clothing piece.
+function buildHfRequest(kind, person, garment, item, handle_file) {
+  if (kind === "idm") {
+    return {
+      endpoint: "/tryon",
+      payload: {
+        dict: { background: handle_file(person), layers: [], composite: null },
+        garm_img: handle_file(garment),
+        garment_des: `${item.color} ${item.name}`,
+        is_checked: true,       // Find the clothing area automatically.
+        is_checked_crop: false,
+        denoise_steps: 30,
+        seed: 42
+      },
+      pick: data => data[0]
+    };
+  }
+  // Image editors take a gallery: [{ image, caption }, ...] (person first, then shoes).
+  const gallery = [
+    { image: handle_file(person), caption: null },
+    { image: handle_file(garment), caption: null }
+  ];
+  if (kind === "flux2-edit") {
+    return {
+      endpoint: "/infer",
+      payload: {
+        prompt: SHOE_EDIT_PROMPT,
+        input_images: gallery,
+        seed: 0,
+        randomize_seed: true,
+        width: 768,
+        height: 1024,
+        num_inference_steps: 20,  // Fewer steps = less free GPU time used.
+        guidance_scale: 4,
+        prompt_upsampling: false
+      },
+      pick: data => data[0]
+    };
+  }
+  if (kind === "qwen-edit") {
+    return {
+      endpoint: "/infer",
+      payload: {
+        images: gallery,
+        prompt: SHOE_EDIT_PROMPT,
+        seed: 0,
+        randomize_seed: true,
+        true_guidance_scale: 4,
+        num_inference_steps: 20,
+        height: 1024,
+        width: 768,
+        rewrite_prompt: false
+      },
+      pick: data => data[0][0].image
+    };
+  }
+
+  const common = { vton_img: handle_file(person), garm_img: handle_file(garment), n_samples: 1, n_steps: 20, image_scale: 2, seed: -1 };
+  if (kind === "ootd-upper") {
+    return { endpoint: "/process_dc", payload: { ...common, category: "Upper-body" }, pick: data => data[0][0].image };
+  }
+  return { endpoint: "/process_dc", payload: { ...common, category: "Lower-body" }, pick: data => data[0][0].image };
+}
+
+function isQuotaMessage(text) {
+  return /quota|exceeded|rate limit|too many requests/i.test(text);
+}
+
+const HF_QUOTA_MESSAGE =
+  "You've used the free Hugging Face try-on time for now. Try again later, add a free " +
+  "Hugging Face token in AI settings for more, or switch to Google Gemini.";
+const HF_OFFLINE_MESSAGE =
+  "The free try-on service is busy or offline right now. Please try again in a few minutes.";
+
+// Status updates can carry a warning such as "ZeroGPU quota exceeded" without
+// being marked as an error, so read both the title and the message.
+function getStatusText(status) {
+  const message = typeof status.message === "string" ? status.message : JSON.stringify(status.message || "");
+  return [status.title, message].filter(Boolean).join(": ");
+}
+
+// Put one clothing piece on the person, trying each service until one works.
+// Each demo has its own free-time limit, so a limit on one still tries the next.
+async function runHfStep(gradio, services, person, garment, item, onStatus) {
+  const token = getHfToken();
+  let hitQuota = false;
+  let quotaResetMinutes = 0;
+
+  for (const service of services) {
+    try {
+      // Ask for "status" updates too (the client only sends "data" by default);
+      // they carry the queue position and warnings like "quota exceeded".
+      const options = { events: ["data", "status"] };
+      if (token) options.token = token;
+      const client = await gradio.Client.connect(service.space, options);
+      const request = buildHfRequest(service.kind, person, garment, item, gradio.handle_file);
+      const job = client.submit(request.endpoint, request.payload);
+      const timer = setTimeout(() => job.cancel && job.cancel(), HF_STEP_TIMEOUT_MS);
+
+      let data = null;
+      let lastStatusText = "";
+      try {
+        for await (const message of job) {
+          if (message.type === "status") {
+            const text = getStatusText(message);
+            if (text) lastStatusText = text;
+            if (message.stage === "error" || isQuotaMessage(text)) {
+              throw new Error(text || "The try-on service reported an error.");
+            }
+            onStatus(message);
+          } else if (message.type === "data") {
+            data = message.data;
+            break;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!data) throw new Error(lastStatusText || "No result (timed out or cancelled).");
+
+      const file = request.pick(data);
+      const response = await fetch(file && (file.url || file.path));
+      if (!response.ok) throw new Error("Could not download the result.");
+      return await response.blob();
+    } catch (err) {
+      const text = String((err && (err.message || err.title)) || err);
+      if (isQuotaMessage(text)) {
+        hitQuota = true;
+        // e.g. "Try again in 23:49:18" -> remember the longest wait we were told.
+        const wait = /try again in (\d+):(\d+):(\d+)/i.exec(text);
+        if (wait) {
+          const minutes = Number(wait[1]) * 60 + Number(wait[2]);
+          quotaResetMinutes = Math.max(quotaResetMinutes, minutes);
+        }
+      }
+      console.warn(`Try-on with ${service.space} failed, trying the next service:`, text);
+    }
+  }
+  if (!hitQuota) throw new PreviewError(HF_OFFLINE_MESSAGE);
+  const error = new PreviewError(HF_QUOTA_MESSAGE + describeReset(quotaResetMinutes));
+  error.isQuota = true;
+  throw error;
+}
+
+// Turn minutes into "It resets in about 3 hours." (blank if unknown).
+function describeReset(minutes) {
+  if (!minutes) return "";
+  if (minutes < 60) return ` It resets in about ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+  const hours = Math.round(minutes / 60);
+  return ` It resets in about ${hours} hour${hours === 1 ? "" : "s"}.`;
+}
+
+async function generateWithHuggingFace(userPhoto, outfit, onProgress) {
+  const steps = HF_DRESSING_ORDER
+    .map(category => outfit.find(item => item.category === category))
+    .filter(Boolean);
+  const notShown = outfit.filter(item => !HF_DRESSING_ORDER.includes(item.category));
+
+  if (steps.length === 0) {
+    throw new PreviewError("This outfit has no clothing pieces to put on yet.");
+  }
+
+  onProgress("Connecting to the free try-on service…");
+  const gradio = await loadGradioClient();
+
+  let person = dataUrlToBlob(userPhoto.image);
+  const added = [];
+  const failed = [];     // Pieces that couldn't be put on.
+  let lastError = null;
+
+  for (let i = 0; i < steps.length; i++) {
+    const item = steps[i];
+    const label = `Step ${i + 1} of ${steps.length}: putting on ${item.name}`;
+    onProgress(label + "…");
+
+    const garment = dataUrlToBlob(await resizeToJpeg(item.image, GARMENT_MAX_PX));
+    const services = item.category === "bottom" ? HF_LOWER_BODY_SERVICES
+      : item.category === "shoes" ? HF_SHOE_SERVICES
+      : HF_UPPER_BODY_SERVICES;
+
+    try {
+      person = await runHfStep(gradio, services, person, garment, item, status => {
+        const waiting = status.queue && typeof status.position === "number" && status.position > 0;
+        onProgress(label + (waiting ? ` (waiting in line, #${status.position + 1})…` : "…"));
+      });
+      added.push(item);
+    } catch (err) {
+      // Keep going: a partial preview is more useful than none.
+      failed.push(item);
+      lastError = err;
+    }
+  }
+
+  if (added.length === 0) throw lastError || new PreviewError(HF_OFFLINE_MESSAGE);
+
+  const names = items => items.map(item => item.name).join(", ");
+  const notes = [];
+  if (failed.length) {
+    const reason = lastError && lastError.isQuota
+      ? "the free try-on time ran out" : "the free service didn't respond";
+    notes.push(`${names(failed)} couldn't be added because ${reason}. Try again later to see the full outfit.`);
+  }
+  if (notShown.length) {
+    notes.push(`${names(notShown)} ${notShown.length === 1 ? "isn't" : "aren't"} shown in the free preview.`);
+  }
+  return { image: await blobToDataUrl(person), note: notes.join(" ") };
+}
+
+// ---------- Rendering the preview screen ----------
+const previewEls = {
+  list: document.getElementById("preview-outfit-list"),
+  uploadLabel: document.getElementById("preview-upload-label"),
+  photoFrame: document.getElementById("preview-photo-frame"),
+  photoImg: document.getElementById("preview-photo-img"),
+  photoInput: document.getElementById("preview-photo-input"),
+  photoRemove: document.getElementById("preview-photo-remove"),
+  stage: document.getElementById("preview-result-stage"),
+  placeholder: document.getElementById("preview-result-placeholder"),
+  icon: document.getElementById("preview-result-icon"),
+  message: document.getElementById("preview-result-message"),
+  resultImg: document.getElementById("preview-result-img"),
+  caption: document.getElementById("preview-result-caption"),
+  download: document.getElementById("preview-download"),
+  generate: document.getElementById("preview-generate-btn"),
+  settings: document.getElementById("preview-settings"),
+  providerInputs: document.querySelectorAll('input[name="preview-provider"]'),
+  hfSettings: document.getElementById("preview-hf-settings"),
+  hfForm: document.getElementById("preview-hf-form"),
+  hfInput: document.getElementById("preview-hf-input"),
+  hfRemove: document.getElementById("preview-hf-remove"),
+  hfStatus: document.getElementById("preview-hf-status"),
+  geminiSettings: document.getElementById("preview-gemini-settings"),
+  keyForm: document.getElementById("preview-key-form"),
+  keyInput: document.getElementById("preview-key-input"),
+  keyRemove: document.getElementById("preview-key-remove"),
+  keyStatus: document.getElementById("preview-key-status")
+};
+
+// Load a previously generated preview so it survives a page refresh.
+(function restorePreviewResult() {
+  const raw = readStorage(PREVIEW_RESULT_KEY);
+  if (!raw) return;
+  try { previewState.result = JSON.parse(raw); } catch { removeStorage(PREVIEW_RESULT_KEY); }
+})();
+
+function renderPreviewOutfitList(outfit) {
+  previewEls.list.replaceChildren();
+
+  if (outfit.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "preview-outfit-empty";
+    empty.textContent = "No outfit yet. Add clothes in My Closet first.";
+    previewEls.list.appendChild(empty);
+    return;
+  }
+
+  outfit.forEach(item => {
+    const row = document.createElement("li");
+    row.className = `preview-outfit-row row-${item.category}`;
+
+    const thumb = document.createElement("span");
+    thumb.className = "preview-outfit-thumb";
+    const img = document.createElement("img");
+    img.src = item.image;
+    img.alt = "";
+    thumb.appendChild(img);
+
+    const name = document.createElement("span");
+    name.className = "preview-outfit-name";
+    name.textContent = item.name;
+
+    const srLabel = document.createElement("span");
+    srLabel.className = "visually-hidden";
+    srLabel.textContent = getCategoryLabel(item.category) + ": ";
+    name.prepend(srLabel);
+
+    row.append(thumb, name);
+    previewEls.list.appendChild(row);
+  });
+}
+
+function setPreviewPlaceholder(iconClass, text) {
+  previewEls.placeholder.classList.remove("hidden");
+  previewEls.resultImg.classList.add("hidden");
+  previewEls.caption.classList.add("hidden");
+  previewEls.download.classList.add("hidden");
+  previewEls.icon.className = iconClass;
+  previewEls.message.textContent = text;
+}
+
+function renderVirtualPreview() {
+  const outfit = getPreviewOutfit();
+  const outfitKey = getOutfitKey(outfit);
+  const photo = getUserPhoto();
+  const hasKey = !!getGeminiKey();
+  const provider = getPreviewProvider();
+  const generating = previewState.status === "generating";
+
+  renderPreviewOutfitList(outfit);
+
+  // Photo slot: upload box vs. saved photo.
+  previewEls.uploadLabel.classList.toggle("hidden", !!photo);
+  previewEls.photoFrame.classList.toggle("hidden", !photo);
+  if (photo) previewEls.photoImg.src = photo.image;
+  previewEls.photoInput.disabled = generating;
+  previewEls.photoRemove.disabled = generating;
+
+  // Generated preview area (matches the Figma states).
+  const result = previewState.result;
+  const resultIsCurrent = result && photo &&
+    result.outfitKey === outfitKey && result.photoStamp === photo.stamp;
+  previewEls.stage.setAttribute("aria-busy", String(generating));
+
+  if (generating) {
+    setPreviewPlaceholder("preview-spinner", previewState.progress || "Preview generating…");
+  } else if (previewState.status === "error") {
+    setPreviewPlaceholder("preview-person-icon is-error", previewState.error);
+  } else if (resultIsCurrent) {
+    previewEls.placeholder.classList.add("hidden");
+    previewEls.resultImg.classList.remove("hidden");
+    previewEls.resultImg.src = result.image;
+    previewEls.resultImg.alt = "AI-generated preview of you wearing " +
+      outfit.map(item => item.name).join(", ");
+    previewEls.caption.classList.remove("hidden");
+    previewEls.caption.textContent = "Preview ready · AI-generated, so details may differ from your real clothes." +
+      (result.note ? " " + result.note : "");
+    previewEls.download.classList.remove("hidden");
+    previewEls.download.href = result.image;
+  } else if (!photo) {
+    setPreviewPlaceholder("preview-person-icon", "Upload a full-body photo to preview this outfit.");
+  } else if (result && result.photoStamp === photo.stamp) {
+    setPreviewPlaceholder("preview-person-icon", "Your outfit changed since the last preview. Generate again to see it.");
+  } else {
+    setPreviewPlaceholder("preview-person-icon", "No preview generated yet.");
+  }
+
+  // Generate button.
+  const canGenerate = !!photo && outfit.length > 0 && !generating;
+  previewEls.generate.disabled = !canGenerate;
+  previewEls.generate.textContent = generating
+    ? "Generating…"
+    : resultIsCurrent ? "Generate Again →" : "Generate Preview →";
+  previewEls.generate.title = !photo ? "Upload your photo first"
+    : outfit.length === 0 ? "Add clothes in My Closet first" : "";
+
+  // AI settings: show only the chosen service's options.
+  previewEls.providerInputs.forEach(input => {
+    input.checked = input.value === provider;
+    input.disabled = generating;
+  });
+  previewEls.hfSettings.classList.toggle("hidden", provider !== "huggingface");
+  previewEls.geminiSettings.classList.toggle("hidden", provider !== "gemini");
+
+  // Gemini can't work without a key, so open the panel when one is missing.
+  if (provider === "gemini" && !hasKey) previewEls.settings.open = true;
+  previewEls.keyStatus.textContent = hasKey
+    ? "A key is saved in this browser."
+    : "No key saved yet. You need one to use Gemini.";
+  previewEls.hfStatus.textContent = getHfToken()
+    ? "A token is saved in this browser."
+    : "No token saved (that's fine: the free preview still works).";
+}
+
+// ---------- Events ----------
+previewEls.photoInput.addEventListener("change", async () => {
+  const file = previewEls.photoInput.files && previewEls.photoInput.files[0];
+  previewEls.photoInput.value = ""; // Allow picking the same file again later.
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    previewState.status = "error";
+    previewState.error = "That file is not an image. Please choose a photo.";
+    renderVirtualPreview();
+    return;
+  }
+
+  try {
+    const image = await resizeToJpeg(await readFileAsDataUrl(file), USER_PHOTO_MAX_PX);
+    const photo = { image, stamp: String(Date.now()) };
+    previewState.status = "idle";
+    if (!writeStorage(USER_PHOTO_KEY, JSON.stringify(photo))) {
+      previewState.status = "error";
+      previewState.error = "Your browser storage is full, so the photo could not be saved. Remove some closet items and try again.";
+    }
+  } catch (err) {
+    previewState.status = "error";
+    previewState.error = err.message;
+  }
+  renderVirtualPreview();
+});
+
+previewEls.photoRemove.addEventListener("click", () => {
+  removeStorage(USER_PHOTO_KEY);
+  removeStorage(PREVIEW_RESULT_KEY);
+  previewState.result = null;
+  previewState.status = "idle";
+  renderVirtualPreview();
+  previewEls.photoInput.focus();
+});
+
+previewEls.generate.addEventListener("click", async () => {
+  const outfit = getPreviewOutfit();
+  const photo = getUserPhoto();
+  if (!photo || outfit.length === 0 || previewState.status === "generating") return;
+
+  const provider = getPreviewProvider();
+  const apiKey = getGeminiKey();
+  if (provider === "gemini" && !apiKey) {
+    previewState.status = "error";
+    previewState.error = "Add your Gemini API key in AI settings, or switch to the free Hugging Face option.";
+    renderVirtualPreview();
+    previewEls.settings.open = true;
+    previewEls.keyInput.focus();
+    return;
+  }
+
+  previewState.status = "generating";
+  previewState.progress = "";
+  renderVirtualPreview();
+
+  // Update the "generating" message without redrawing the whole screen.
+  const onProgress = text => {
+    previewState.progress = text;
+    if (previewState.status === "generating") previewEls.message.textContent = text;
+  };
+
+  try {
+    const generated = provider === "gemini"
+      ? (onProgress("Asking Google Gemini… this can take up to a minute."),
+        await generateTryOnImage(apiKey, photo, outfit))
+      : await generateWithHuggingFace(photo, outfit, onProgress);
+
+    // Store a smaller copy so it fits in browser storage.
+    const image = await resizeToJpeg(generated.image, RESULT_MAX_PX, 0.9).catch(() => generated.image);
+    previewState.result = {
+      image,
+      note: generated.note,
+      outfitKey: getOutfitKey(outfit),
+      photoStamp: photo.stamp,
+      createdAt: Date.now()
+    };
+    writeStorage(PREVIEW_RESULT_KEY, JSON.stringify(previewState.result)); // OK if this fails.
+    previewState.status = "idle";
+  } catch (err) {
+    previewState.status = "error";
+    previewState.error = err instanceof PreviewError
+      ? err.message
+      : "Something went wrong while creating the preview. Please try again.";
+  }
+  renderVirtualPreview();
+});
+
+previewEls.keyForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const key = previewEls.keyInput.value.trim();
+  if (!key) {
+    previewEls.keyStatus.textContent = "Paste a key first.";
+    return;
+  }
+  writeStorage(GEMINI_KEY_STORAGE, key);
+  previewEls.keyInput.value = "";
+  if (previewState.status === "error") previewState.status = "idle";
+  renderVirtualPreview();
+  previewEls.keyStatus.textContent = "Key saved in this browser.";
+});
+
+previewEls.keyRemove.addEventListener("click", () => {
+  removeStorage(GEMINI_KEY_STORAGE);
+  renderVirtualPreview();
+});
+
+previewEls.providerInputs.forEach(input => {
+  input.addEventListener("change", () => {
+    writeStorage(PREVIEW_PROVIDER_KEY, input.value);
+    if (previewState.status === "error") previewState.status = "idle";
+    renderVirtualPreview();
+  });
+});
+
+previewEls.hfForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const token = previewEls.hfInput.value.trim();
+  if (!/^hf_\w+$/.test(token)) {
+    previewEls.hfStatus.textContent = 'That doesn\'t look like a Hugging Face token (it should start with "hf_").';
+    return;
+  }
+  writeStorage(HF_TOKEN_KEY, token);
+  previewEls.hfInput.value = "";
+  renderVirtualPreview();
+  previewEls.hfStatus.textContent = "Token saved in this browser.";
+});
+
+previewEls.hfRemove.addEventListener("click", () => {
+  removeStorage(HF_TOKEN_KEY);
+  renderVirtualPreview();
+});
+
+document.getElementById("preview-back-home").addEventListener("click", () => goToRoute("home"));
+document.getElementById("open-preview-btn").addEventListener("click", () => goToRoute("preview"));
 
 // HEND: Show the screen named in the address (e.g. #closet/shoes) on page load.
 applyRoute();
