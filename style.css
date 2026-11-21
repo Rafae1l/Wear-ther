@@ -1543,3 +1543,123 @@ body {
     height: 140px;
   }
 }
+
+/* ===== Unified dropdown arrows =====
+   Every <select> and every suggestion input (input[list]) uses the same
+   chevron, sized and positioned to match the box padding. */
+.form-group select,
+.closet-toolbar select,
+.form-group input[list] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7.5l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.8rem center;
+  background-size: 1rem 1rem;
+  padding-right: 2.4rem;
+  cursor: pointer;
+}
+
+.form-group input[list] {
+  cursor: text;
+}
+
+/* Hide Chrome/Edge's built-in datalist arrow but keep it clickable,
+   stretched over our chevron so clicking the arrow still opens the list. */
+.form-group input[list]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  cursor: pointer;
+  width: 1.6rem;
+  height: 100%;
+  margin-right: -1.9rem;
+}
+
+.form-group select:focus,
+.closet-toolbar select:focus,
+.form-group input[list]:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2310b981' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7.5l5 5 5-5'/%3E%3C/svg%3E");
+}
+
+/* ===== Undo toast ===== */
+.undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translate(-50%, 150%);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: min(360px, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0.85rem 1rem 0.95rem 1.2rem;
+  background: #1e293b;
+  color: #f8fafc;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+  font-size: 0.9rem;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  z-index: 2000;
+}
+
+.undo-toast.show {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.undo-toast-message {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-toast-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1.5px solid #10b981;
+  color: #34d399;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.undo-toast-btn:hover,
+.undo-toast-btn:focus-visible {
+  background: #10b981;
+  color: #ffffff;
+  outline: none;
+}
+
+.undo-toast-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: #10b981;
+  transform-origin: left;
+  transform: scaleX(0);
+}
+
+.undo-toast.show .undo-toast-bar {
+  animation: undo-countdown 6s linear forwards;
+}
+
+@keyframes undo-countdown {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .undo-toast { transition: opacity 0.2s; }
+  .undo-toast.show .undo-toast-bar { animation-duration: 6s; }
+}

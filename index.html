@@ -278,7 +278,42 @@
 
         <div class="form-group">
           <label for="item-name">Clothing Name</label>
-          <input type="text" id="item-name" placeholder="e.g., Blue Jeans" required>
+          <input type="text" id="item-name" list="item-name-suggestions" placeholder="e.g., Blue Jeans" autocomplete="off" required>
+          <!-- Suggestions only; users can still type any custom name -->
+          <datalist id="item-name-suggestions">
+            <option value="T-Shirt"></option>
+            <option value="Long Sleeve Shirt"></option>
+            <option value="Button-Up Shirt"></option>
+            <option value="Polo Shirt"></option>
+            <option value="Tank Top"></option>
+            <option value="Blouse"></option>
+            <option value="Sweater"></option>
+            <option value="Cardigan"></option>
+            <option value="Hoodie"></option>
+            <option value="Sweatshirt"></option>
+            <option value="Jeans"></option>
+            <option value="Chinos"></option>
+            <option value="Trousers"></option>
+            <option value="Sweatpants"></option>
+            <option value="Leggings"></option>
+            <option value="Shorts"></option>
+            <option value="Skirt"></option>
+            <option value="Dress"></option>
+            <option value="Puffer Jacket"></option>
+            <option value="Denim Jacket"></option>
+            <option value="Leather Jacket"></option>
+            <option value="Rain Jacket"></option>
+            <option value="Windbreaker"></option>
+            <option value="Blazer"></option>
+            <option value="Trench Coat"></option>
+            <option value="Wool Coat"></option>
+            <option value="Sneakers"></option>
+            <option value="Boots"></option>
+            <option value="Rain Boots"></option>
+            <option value="Loafers"></option>
+            <option value="Sandals"></option>
+            <option value="Dress Shoes"></option>
+          </datalist>
         </div>
 
         <div class="form-group">
@@ -295,7 +330,32 @@
 
         <div class="form-group">
           <label for="item-color">Color</label>
-          <input type="text" id="item-color" placeholder="e.g., Navy Blue, Light Gray, Indigo" required>
+          <input type="text" id="item-color" list="item-color-suggestions" placeholder="e.g., Navy Blue, Light Gray, Indigo" autocomplete="off" required>
+          <!-- Suggestions only; users can still type any custom color -->
+          <datalist id="item-color-suggestions">
+            <option value="Black"></option>
+            <option value="White"></option>
+            <option value="Gray"></option>
+            <option value="Light Gray"></option>
+            <option value="Charcoal"></option>
+            <option value="Navy"></option>
+            <option value="Blue"></option>
+            <option value="Light Blue"></option>
+            <option value="Indigo"></option>
+            <option value="Beige"></option>
+            <option value="Cream"></option>
+            <option value="Khaki"></option>
+            <option value="Tan"></option>
+            <option value="Brown"></option>
+            <option value="Olive"></option>
+            <option value="Green"></option>
+            <option value="Red"></option>
+            <option value="Burgundy"></option>
+            <option value="Pink"></option>
+            <option value="Purple"></option>
+            <option value="Yellow"></option>
+            <option value="Orange"></option>
+          </datalist>
         </div>
 
         <!-- 2. Multiple-choice checkboxes for weather suitability -->
@@ -366,6 +426,13 @@
         <button id="viewer-edit" class="save-btn" type="button">Edit</button>
       </div>
     </div>
+  </div>
+
+  <!-- Undo toast shown after removing a closet item -->
+  <div id="undo-toast" class="undo-toast" role="status" aria-live="polite">
+    <span id="undo-toast-message" class="undo-toast-message"></span>
+    <button id="undo-toast-btn" class="undo-toast-btn" type="button">Undo</button>
+    <div id="undo-toast-bar" class="undo-toast-bar" aria-hidden="true"></div>
   </div>
 
   <script src="app.js"></script>
