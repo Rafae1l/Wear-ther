@@ -120,27 +120,68 @@ const SEED_CLOSET =
     "image" : "assets/boots.jpg"}
 ];
 
+// Bump this whenever SEED_CLOSET changes so browsers that already saved an
+// older starter closet pick up the new items.
+const SEED_VERSION_KEY = "wearther_seed_version";
+const SEED_VERSION = "3";
+
+// IDs used by earlier starter closets (the old placeholder pictures).
+const OLD_SEED_IDS = new Set([
+  "item_1794015153676", "item_1794015297157", "item_1794015427162",
+  "item_1794015538016", "item_1794015629914", "item_1794015747636",
+  "item_1794015848787", "item_1794015913777", "item_1794338665249",
+  "item_1794338728153", "item_1794338290625"
+]);
+
+// Replace old/outdated starter items with the current SEED_CLOSET while
+// keeping everything the user uploaded (and their favorite flags).
+function syncSeedCloset(items) {
+  const seedIds = new Set(SEED_CLOSET.map(item => item.id));
+  const savedById = new Map(items.map(item => [item.id, item]));
+  const userItems = items.filter(item => !seedIds.has(item.id) && !OLD_SEED_IDS.has(item.id));
+  const seedItems = SEED_CLOSET.map(seed => {
+    const saved = savedById.get(seed.id);
+    return saved && saved.favorite ? { ...seed, favorite: true } : { ...seed };
+  });
+  return [...seedItems, ...userItems];
+}
+
 // Load from LocalStorage or seed defaults
 function getStoredCloset() {
   const data = localStorage.getItem(CLOSET_KEY);
   if (!data) {
     localStorage.setItem(CLOSET_KEY, JSON.stringify(SEED_CLOSET));
+    localStorage.setItem(SEED_VERSION_KEY, SEED_VERSION);
     return SEED_CLOSET;
   }
-  const items = JSON.parse(data);
+  let items = JSON.parse(data);
 
   // Repair an older nested starter list while keeping every saved garment.
   if (items.some(Array.isArray)) {
-    const flattenedItems = items.flat();
-    saveStoredCloset(flattenedItems);
-    return flattenedItems;
+    items = items.flat();
+    saveStoredCloset(items);
+  }
+
+  // Refresh the starter items if this browser saved an older version.
+  if (localStorage.getItem(SEED_VERSION_KEY) !== SEED_VERSION) {
+    items = syncSeedCloset(items);
+    saveStoredCloset(items);
+    localStorage.setItem(SEED_VERSION_KEY, SEED_VERSION);
   }
 
   return items;
 }
 
+// Returns true if saved; false (with a message) if browser storage is full.
 function saveStoredCloset(items) {
-  localStorage.setItem(CLOSET_KEY, JSON.stringify(items));
+  try {
+    localStorage.setItem(CLOSET_KEY, JSON.stringify(items));
+    return true;
+  } catch (err) {
+    console.error("Could not save closet", err);
+    alert("Your closet couldn't be saved because browser storage is full. Try removing a few items.");
+    return false;
+  }
 }
 
 // ================= HEND: WARDROBE DISPLAY & BROWSING =================
@@ -683,16 +724,12 @@ addForm.addEventListener("submit", (e) => {
 
     // Check if user uploaded a replacement picture
     if (imageInput.files && imageInput.files[0]) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        targetItem.image = event.target.result;
-        saveStoredCloset(items);
-        finalizeSave();
-      };
-      reader.readAsDataURL(imageInput.files[0]);
+      readClosetPhoto(imageInput.files[0]).then(image => {
+        targetItem.image = image;
+        if (saveStoredCloset(items)) finalizeSave();
+      }).catch(err => alert(err.message));
     } else {
-      saveStoredCloset(items);
-      finalizeSave();
+      if (saveStoredCloset(items)) finalizeSave();
     }
   } else {
     // ADD MODE: Create new garment
@@ -701,8 +738,7 @@ addForm.addEventListener("submit", (e) => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
+    readClosetPhoto(imageInput.files[0]).then(image => {
       const newItem = {
         id: "item_" + Date.now(),
         name,
@@ -710,16 +746,21 @@ addForm.addEventListener("submit", (e) => {
         color,
         warmth: selectedWarmth,
         favorite: false,
-        image: event.target.result
+        image
       };
 
       items.push(newItem);
-      saveStoredCloset(items);
-      finalizeSave();
-    };
-    reader.readAsDataURL(imageInput.files[0]);
+      if (saveStoredCloset(items)) finalizeSave();
+    }).catch(err => alert(err.message));
   }
 });
+
+// Read an uploaded photo and shrink it so many items fit in localStorage
+// (browsers allow only ~5MB per site; full phone photos fill that fast).
+async function readClosetPhoto(file) {
+  const original = await readFileAsDataUrl(file);
+  return resizeToJpeg(original, 800, 0.8);
+}
 
 function finalizeSave() {
   modal.classList.add("hidden");
