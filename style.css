@@ -1439,12 +1439,16 @@ body {
   margin-top: 0.5rem;
 }
 
-/* Big green Generate button under the board. */
+/* Try-on + Save buttons under the board. */
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 1.4rem;
+}
 .preview-generate-btn {
-  display: block;
-  width: min(100%, 420px);
-  margin: 1.4rem auto 0;
-  padding: 0.9rem 1.5rem;
+  padding: 0.9rem 1.8rem;
   font-size: 1rem;
 }
 .preview-generate-btn:disabled {
@@ -1452,72 +1456,6 @@ body {
   box-shadow: none;
   transform: none;
   cursor: not-allowed;
-}
-
-/* API key settings */
-.preview-settings {
-  margin-top: 1.6rem;
-  background: #ffffff;
-  border: 1px solid #dce4ec;
-  border-radius: 12px;
-  padding: 0.9rem 1.1rem;
-}
-.preview-settings summary {
-  font-weight: 700;
-  color: #334155;
-  cursor: pointer;
-}
-.preview-settings .helper-text {
-  margin-top: 0.6rem;
-}
-
-/* Choose the AI service */
-.preview-provider {
-  border: none;
-  margin-top: 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.preview-provider legend {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #334155;
-  margin-bottom: 0.5rem;
-}
-.preview-provider label {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.55rem;
-  font-size: 0.85rem;
-  color: #475569;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 0.6rem 0.8rem;
-  cursor: pointer;
-  line-height: 1.45;
-}
-.preview-provider label:has(input:checked) {
-  background: #e8f5ec;
-  border-color: #7bb38e;
-}
-.preview-provider input {
-  margin-top: 0.2rem;
-  accent-color: #059669;
-}
-.preview-key-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.7rem;
-}
-.preview-key-form input {
-  flex: 1 1 220px;
-  padding: 0.6rem 0.85rem;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 10px;
-  font-size: 0.9rem;
 }
 
 #screen-preview button:focus-visible,
@@ -1662,4 +1600,292 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .undo-toast { transition: opacity 0.2s; }
   .undo-toast.show .undo-toast-bar { animation-duration: 6s; }
+}
+
+/* ===== HEND: SWAP HIGHLIGHT, COMPARE, SAVE, FULL-OUTFIT PREVIEW, SAVED OUTFITS ===== */
+
+/* Card that was just swapped: green border + "Updated" badge for a few seconds. */
+.garment-card.just-swapped {
+  outline: 3px solid #059669;
+  outline-offset: 3px;
+  animation: swap-pulse 1.2s ease-out 2;
+}
+@keyframes swap-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.45); }
+  100% { box-shadow: 0 0 0 14px rgba(5, 150, 105, 0); }
+}
+.swap-badge {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+  background: #059669;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: 20px;
+}
+.swap-badge.is-original {
+  background: #f59e0b;
+}
+.garment-card.is-different {
+  outline: 3px dashed #f59e0b;
+  outline-offset: 3px;
+}
+
+/* Two-option toggle used for Original vs. Modified and for the preview views. */
+.compare-toggle {
+  display: inline-flex;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 4px;
+  gap: 4px;
+}
+.compare-btn {
+  border: none;
+  background: transparent;
+  color: #334155;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.compare-btn.active {
+  background: #ffffff;
+  color: #065f46;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+.compare-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.outfit-compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin: 1rem 0 0.4rem;
+}
+.outfit-compare-note {
+  font-size: 0.88rem;
+  color: #475569;
+  margin-bottom: 0.6rem;
+}
+.outfit-compare-note .preview-mini-btn {
+  margin-left: 0.4rem;
+}
+
+/* Save Outfit button (outfit editor + preview). */
+.save-outfit-btn {
+  background: #fff7e0;
+  color: #8a4b00;
+  border: 2px solid #f5c26b;
+  padding: 0.7rem 1.4rem;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.save-outfit-btn:hover:not(:disabled) {
+  background: #f5c26b;
+  color: #3d2200;
+}
+.save-outfit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Preview header with the view toggle. */
+.preview-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+.preview-result-head h3 {
+  margin-bottom: 0;
+}
+.preview-result-placeholder .preview-mini-btn {
+  margin-top: 0.8rem;
+}
+
+/* "Full outfit": jacket + top side by side, bottom below, shoes at the bottom. */
+.outfit-flatlay {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "outerwear top"
+    "bottom bottom"
+    "shoes shoes";
+  gap: 0.7rem;
+  background: #ffffff;
+  border: 1px solid #dce4ec;
+  border-radius: 12px;
+  padding: 0.9rem;
+}
+.flatlay-tile {
+  margin: 0;
+  border-radius: 12px;
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+.flatlay-tile img {
+  width: 100%;
+  height: 130px;
+  object-fit: contain;
+  background: #ffffff;
+  border-radius: 8px;
+}
+.flatlay-tile figcaption {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1e293b;
+  text-align: center;
+}
+.flatlay-outerwear { grid-area: outerwear; background: #e3d2fc; }
+.flatlay-top { grid-area: top; background: #d7f5dd; }
+.flatlay-bottom { grid-area: bottom; background: #c5e5fc; justify-self: center; width: min(100%, 260px); }
+.flatlay-shoes { grid-area: shoes; background: #f7ddc3; justify-self: center; width: min(100%, 260px); }
+.flatlay-bottom img { height: 170px; }
+.flatlay-shoes img { height: 100px; }
+.flatlay-tile.is-empty {
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  justify-content: center;
+  min-height: 80px;
+}
+.flatlay-tile.is-empty figcaption {
+  color: #64748b;
+  font-weight: 600;
+}
+.flatlay-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: #64748b;
+  font-weight: 600;
+  padding: 2rem 0;
+}
+
+/* Saved Outfits page */
+.saved-list {
+  display: grid;
+  gap: 1.2rem;
+}
+.saved-outfit-card {
+  background: #ffffff;
+  border: 1px solid #dce4ec;
+  border-radius: 16px;
+  padding: 1.2rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+.saved-outfit-head h3 {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+.saved-outfit-head p {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin: 0.15rem 0 0.9rem;
+}
+.saved-outfit-pieces {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.saved-piece {
+  border-radius: 12px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+.saved-piece img {
+  width: 100%;
+  height: 90px;
+  object-fit: contain;
+  background: #ffffff;
+  border-radius: 8px;
+}
+.saved-piece.is-empty {
+  justify-content: center;
+  min-height: 110px;
+  color: #64748b;
+  font-weight: 600;
+}
+.saved-outfit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.saved-delete-btn[data-confirm="yes"] {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+.compare-btn:focus-visible,
+.save-outfit-btn:focus-visible,
+#screen-saved button:focus-visible {
+  outline: 3px solid #059669;
+  outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+  .saved-outfit-pieces {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* HEND: "Original suggestion" grid uses the same 4-column card layout as the editor. */
+#screen-outfit #outfit-original-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+#screen-outfit #outfit-original-grid > .garment-card {
+  min-width: 0;
+  padding: 1rem;
+  text-align: center;
+}
+#screen-outfit #outfit-original-grid > .garment-card > img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: white;
+  border-radius: 10px;
+  margin: 0.75rem 0;
+}
+@media (max-width: 800px) {
+  #screen-outfit #outfit-original-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 450px) {
+  #screen-outfit #outfit-original-grid {
+    grid-template-columns: 1fr;
+  }
 }
