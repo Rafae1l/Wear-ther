@@ -1716,7 +1716,7 @@ const RETIRED_STORAGE_KEYS = ["wearther_gemini_api_key", "wearther_preview_provi
 // Gemini key on the server, so users are never asked for one. Paste the worker's
 // address here after deploying it, e.g. "https://wear-ther-tryon.<name>.workers.dev".
 // Leave it empty to use only the free Hugging Face try-on below.
-const TRYON_PROXY_URL = "";
+const TRYON_PROXY_URL = "https://wear-ther-tryon.alawihend.workers.dev";
 const TRYON_PROXY_TIMEOUT_MS = 120000;
 
 // Gradio's official JavaScript client, loaded only when someone tries the AI view.
