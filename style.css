@@ -1889,3 +1889,205 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ===== HOURLY WEATHER STRIP (under Today's Weather on Home) ===== */
+#screen-home .hourly-weather {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.hourly-weather-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+#screen-home .hourly-weather-title {
+  margin-bottom: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.hourly-weather-hint {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* One row that scrolls sideways. */
+.hourly-weather-strip {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0.1rem 0.7rem;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #7bb38e #e2e8f0;
+}
+
+.hourly-weather-strip::-webkit-scrollbar {
+  height: 8px;
+}
+
+.hourly-weather-strip::-webkit-scrollbar-track {
+  background: #e2e8f0;
+  border-radius: 8px;
+}
+
+.hourly-weather-strip::-webkit-scrollbar-thumb {
+  background: #7bb38e;
+  border-radius: 8px;
+}
+
+.hourly-weather-strip:focus-visible {
+  outline: 3px solid #198754;
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+.hourly-item {
+  flex: 0 0 auto;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.6rem 0.4rem 0.65rem;
+  background: #f8fafc;
+  border: 1px solid #dce4ec;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+  scroll-snap-align: start;
+  text-align: center;
+}
+
+/* The current hour uses the app's green. */
+.hourly-item.is-now {
+  background: #e8f5ec;
+  border-color: #7bb38e;
+}
+
+.hourly-day {
+  min-height: 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #059669;
+}
+
+.hourly-time {
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #475569;
+}
+
+.hourly-icon {
+  font-size: 1.7rem;
+  line-height: 1.3;
+}
+
+.hourly-temp {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+/* Blue chip for rain/snow chance; the row keeps its height when empty
+   so every card lines up. */
+.hourly-rain {
+  min-height: 1.2rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  white-space: nowrap;
+  background: #c5e5fc;
+  color: #0b3c66;
+}
+
+.hourly-rain.is-none {
+  background: transparent;
+}
+
+@media (max-width: 600px) {
+  .hourly-weather-hint {
+    display: none;
+  }
+
+  .hourly-item {
+    width: 70px;
+  }
+}
+
+/* ===== OUTFIT FOR CURRENT WEATHER / LATER (Suggested Outfit on Home) ===== */
+#screen-home .outfit-target-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem 1.2rem;
+  margin: 1rem 0 0.4rem;
+}
+
+.outfit-later-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.outfit-later-picker label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.outfit-later-picker input[type="time"] {
+  padding: 0.55rem 0.8rem;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  background: #ffffff;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.outfit-later-picker input[type="time"]:focus-visible {
+  outline: 3px solid #198754;
+  outline-offset: 2px;
+}
+
+/* Forecast for the chosen time, or a hint to pick one. */
+#screen-home .outfit-target-note {
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+#screen-home .outfit-target-note:empty {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .outfit-target-bar .compare-toggle {
+    width: 100%;
+  }
+
+  .outfit-target-bar .compare-btn {
+    flex: 1;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.8rem;
+  }
+}

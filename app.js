@@ -829,8 +829,165 @@ const WEATHER_CACHE_KEY = "wearther_weather_cache";
 const WEATHER_LOCATION_KEY = "wearther_last_location";
 const WEATHER_MAX_AGE_MS = 30 * 60 * 1000; // Reuse a forecast for 30 minutes.
 const WEATHER_WINDOW_HOURS = 12;           // "Today" = the next 12 hours.
+const HOURLY_STRIP_HOURS = 24;             // Hours shown in the scrollable strip.
+const HOURLY_DATA_HOURS = 48;              // Hours kept so "Outfit for later" can use any time.
+const WEATHER_SCHEMA = 2;                  // Bump when the saved forecast changes shape.
 
 const weatherState = { status: "loading", data: null, message: "", stale: false };
+
+// ================= OUTFIT TARGET: CURRENT WEATHER OR LATER =================
+// The outfit can be for the weather right now, or for a time the user plans to go
+// out. "Later" finds that hour in the hourly forecast and uses a short window of
+// hours starting there, so the same outfit rules apply to it.
+const OUTFIT_LATER_WINDOW_HOURS = 4;
+const outfitTarget = { mode: "now", time: "" }; // time looks like "17:30"
+
+// Hand-picked swaps are remembered for each target: a new time starts fresh,
+// and coming back to an earlier target restores its swaps.
+const manualOutfitStash = {};
+
+const outfitTargetEls = {
+  nowBtn: document.getElementById("outfit-target-now"),
+  laterBtn: document.getElementById("outfit-target-later"),
+  picker: document.getElementById("outfit-later-picker"),
+  timeInput: document.getElementById("outfit-later-time"),
+  note: document.getElementById("outfit-target-note"),
+  heading: document.getElementById("outfit-editor-heading")
+};
+
+// Forecast times look like "2026-11-22T15:00:00-06:00"; read the hour from the text
+// so it is the forecast location's local hour.
+function forecastHour(startTime) {
+  return Number(String(startTime).slice(11, 13));
+}
+
+// "17:30" -> "5:30 PM"
+function formatClock(timeText) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(timeText || "");
+  if (!match) return "";
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+// A weather snapshot for the chosen time, shaped like the "now" forecast so the
+// outfit rules can read either one. Returns null until a valid time is picked.
+function getLaterWeather() {
+  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  const hours = weatherState.data.hourly;
+  const match = /^(\d{1,2}):\d{2}$/.exec(outfitTarget.time || "");
+  if (!Array.isArray(hours) || hours.length === 0 || !match) return null;
+
+  // The next time the forecast reaches that hour: later today, or tomorrow
+  // if that hour has already passed.
+  const wantedHour = Number(match[1]);
+  const startIndex = hours.findIndex(hour => forecastHour(hour.startTime) === wantedHour);
+  if (startIndex === -1) return null;
+
+  const span = hours.slice(startIndex, startIndex + OUTFIT_LATER_WINDOW_HOURS);
+  const feels = span.map(hour => hour.feels ?? hour.temp);
+  const rainChance = Math.max(...span.map(hour => hour.rainChance || 0));
+  const allText = span.map(hour => hour.text).join(" | ");
+  const isTomorrow = String(hours[startIndex].startTime).slice(0, 10) !==
+    String(hours[0].startTime).slice(0, 10);
+
+  return {
+    location: weatherState.data.location,
+    nowTemp: span[0].temp,
+    nowFeels: Math.round(feels[0]),
+    condition: span[0].text,
+    isDaytime: span[0].isDaytime,
+    avgFeels: feels.reduce((sum, t) => sum + t, 0) / feels.length,
+    lowFeels: Math.min(...feels),
+    maxWind: Math.max(...span.map(hour => hour.wind || 0)),
+    maxRainChance: rainChance,
+    rain: rainChance >= OUTFIT_RULES.rainChance || OUTFIT_RULES.rainWords.test(allText),
+    snow: OUTFIT_RULES.snowWords.test(allText),
+    hoursCovered: span.length,
+    label: formatClock(outfitTarget.time) + (isTomorrow ? " tomorrow" : "")
+  };
+}
+
+// The weather the outfit is being chosen for (null while it isn't available).
+function getOutfitWeather() {
+  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  return outfitTarget.mode === "later" ? getLaterWeather() : weatherState.data;
+}
+
+// Suggested time when "Outfit for later" is first chosen: about 3 hours from now.
+function defaultLaterTime() {
+  const hours = weatherState.data && weatherState.data.hourly;
+  let hour = Array.isArray(hours) && hours.length
+    ? forecastHour(hours[Math.min(3, hours.length - 1)].startTime)
+    : NaN;
+  if (Number.isNaN(hour)) hour = (new Date().getHours() + 3) % 24;
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function outfitTargetKey() {
+  return outfitTarget.mode === "later" ? "later|" + outfitTarget.time : "now";
+}
+
+function setOutfitTarget(mode, time) {
+  const before = outfitTargetKey();
+  outfitTarget.mode = mode;
+  if (time !== undefined) outfitTarget.time = time;
+  const after = outfitTargetKey();
+
+  if (before !== after) {
+    manualOutfitStash[before] = { ...manualOutfitIds };
+    Object.keys(manualOutfitIds).forEach(key => delete manualOutfitIds[key]);
+    Object.assign(manualOutfitIds, manualOutfitStash[after] || {});
+    outfitCompare.view = "modified";
+  }
+  renderOutfitPreview();
+}
+
+// Update the two buttons, the time box, the forecast note, and the editor heading.
+function renderOutfitTargetControls() {
+  const els = outfitTargetEls;
+  const later = outfitTarget.mode === "later";
+  els.nowBtn.classList.toggle("active", !later);
+  els.nowBtn.setAttribute("aria-pressed", String(!later));
+  els.laterBtn.classList.toggle("active", later);
+  els.laterBtn.setAttribute("aria-pressed", String(later));
+  els.picker.classList.toggle("hidden", !later);
+
+  const w = later ? getOutfitWeather() : null;
+  let text = "";
+  if (later) {
+    if (weatherState.status === "loading") {
+      text = "Loading the forecast…";
+    } else if (weatherState.status === "error") {
+      text = "Weather is unavailable, so an outfit for later can't be suggested.";
+    } else if (!outfitTarget.time) {
+      text = "Pick a time to see an outfit for when you go out.";
+    } else if (!w) {
+      text = "That time is outside the forecast we have. Try another time.";
+    } else {
+      const n = w.hoursCovered;
+      text = `${getWeatherIcon(w.condition, w.isDaytime)} ${w.label}: ${w.condition}, ${w.nowTemp}°F` +
+        (w.maxRainChance > 0 ? `, up to ${w.maxRainChance}% chance of precipitation` : "") +
+        `. This outfit covers about ${n} hour${n === 1 ? "" : "s"} from then.`;
+    }
+  }
+  els.note.textContent = text;
+
+  if (els.heading) {
+    els.heading.textContent = later && w ? `Outfit for ${w.label}` : "Today's Outfit";
+  }
+}
+
+outfitTargetEls.nowBtn.addEventListener("click", () => setOutfitTarget("now"));
+outfitTargetEls.laterBtn.addEventListener("click", () => {
+  const time = outfitTarget.time || defaultLaterTime();
+  outfitTargetEls.timeInput.value = time;
+  setOutfitTarget("later", time);
+  outfitTargetEls.timeInput.focus();
+});
+outfitTargetEls.timeInput.addEventListener("change", () => {
+  setOutfitTarget("later", outfitTargetEls.timeInput.value);
+});
+// ----- end outfit target -----
 
 // ----- Outfit rules: how weather conditions connect to clothing labels -----
 // Every closet piece is labeled "warm", "cool", "cold", and/or "all" (All weather).
@@ -940,8 +1097,25 @@ async function fetchNwsJson(url) {
 
 // Turn the raw hourly forecast into the few numbers the outfit rules need.
 function summarizeForecast(points, hourly) {
-  const periods = hourly.properties.periods.slice(0, WEATHER_WINDOW_HOURS);
+  const allPeriods = hourly.properties.periods;
+  const periods = allPeriods.slice(0, WEATHER_WINDOW_HOURS);
   if (periods.length === 0) throw new Error("The forecast had no data.");
+
+  // The next 48 hours. The first 24 fill the scrollable strip on Home, and all of
+  // them let "Outfit for later" look up any time of day.
+  const hourlyStrip = allPeriods.slice(0, HOURLY_DATA_HOURS).map(period => {
+    const temp = toFahrenheit(period);
+    const wind = parseWindMph(period.windSpeed);
+    return {
+      startTime: period.startTime,
+      isDaytime: period.isDaytime !== false,
+      temp: Math.round(temp),
+      wind,
+      feels: calculateFeelsLike(temp, wind),
+      rainChance: period.probabilityOfPrecipitation?.value ?? 0,
+      text: period.shortForecast || ""
+    };
+  });
 
   const hours = periods.map(period => {
     const temp = toFahrenheit(period);
@@ -963,6 +1137,8 @@ function summarizeForecast(points, hourly) {
   return {
     location: place ? `${place.city}, ${place.state}` : "Your location",
     updated: Date.now(),
+    schema: WEATHER_SCHEMA,
+    hourly: hourlyStrip,
     nowTemp: Math.round(hours[0].temp),
     nowFeels: Math.round(hours[0].feels),
     condition: hours[0].text,
@@ -1004,7 +1180,9 @@ function getBrowserPosition() {
 // Load the forecast. Reuses a recent one unless force is true.
 async function loadWeather(force = false) {
   const cached = readWeatherCache();
-  if (!force && cached && Date.now() - cached.data.updated < WEATHER_MAX_AGE_MS) {
+  // A forecast saved by an older version lacks the hourly details, so refetch it.
+  if (!force && cached && cached.data.schema === WEATHER_SCHEMA &&
+    Date.now() - cached.data.updated < WEATHER_MAX_AGE_MS) {
     weatherState.status = "ready";
     weatherState.data = cached.data;
     weatherState.stale = false;
@@ -1070,9 +1248,8 @@ const OUTFIT_CATEGORIES = ["top", "bottom", "outerwear", "shoes"];
 
 // The weather type being dressed for, or null while no forecast is available.
 function getCurrentWeatherBand() {
-  return weatherState.status === "ready" && weatherState.data
-    ? getTemperatureBand(weatherState.data.avgFeels)
-    : null;
+  const w = getOutfitWeather();
+  return w ? getTemperatureBand(w.avgFeels) : null;
 }
 
 // RULE 4: labeled for this band, or labeled "All weather".
@@ -1142,9 +1319,10 @@ function scoreClothingItem(item, band, weather) {
 
 // Returns { picks, skipped, empty, explanation, band } or null when there is no weather.
 function getOutfitSuggestion(closet) {
-  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  // The weather for the chosen time: right now, or the time picked for "later".
+  const w = getOutfitWeather();
+  if (!w) return null;
 
-  const w = weatherState.data;
   const band = getTemperatureBand(w.avgFeels);
 
   // Keep hand-picked pieces only while they still fit the weather.
@@ -1226,10 +1404,10 @@ function getOutfitSuggestion(closet) {
     : `around ${w.nowTemp}°F`;
   const wet = w.snow ? ", snow likely" : w.rain ? ", rain likely" : "";
   const explanation =
-    `Chosen for ${feelsText}${wet}: every piece is labeled "${band}" or "All weather" and the colors match` +
+    `Chosen for ${w.label ? w.label + ", " : ""}${feelsText}${wet}: every piece is labeled "${band}" or "All weather" and the colors match` +
     (notes.length ? ` (${notes.join("; ")})` : "") + ".";
 
-  return { picks, skipped, empty, explanation, band };
+  return { picks, skipped, empty, explanation, band, label: w.label || "" };
 }
 
 // ----- Showing the weather in the existing Home panel -----
@@ -1283,12 +1461,110 @@ function renderWeatherSummary() {
   addBlock("weather-detail", `Wind: up to ${w.maxWind} mph`);
 
   const suggestion = getOutfitSuggestion(getStoredCloset());
-  if (suggestion) addBlock("weather-detail", `Dressing for: ${suggestion.band} weather`);
+  if (suggestion) {
+    addBlock("weather-detail", `Dressing for: ${suggestion.band} weather` +
+      (suggestion.label ? ` (outfit for ${suggestion.label})` : ""));
+  }
   if (weatherState.stale) addBlock("weather-detail", "Showing an older forecast (could not refresh).");
+}
+
+// ----- Hourly strip: icon, time, temperature, and precipitation per hour -----
+function getWeatherIcon(text, isDay) {
+  const t = String(text || "").toLowerCase();
+  if (/thunder|storm/.test(t)) return "⛈️";
+  if (/snow|flurr|blizzard/.test(t)) return "🌨️";
+  if (/sleet|ice|freezing|wintry/.test(t)) return "🌨️";
+  if (/rain|shower|drizzle/.test(t)) return "🌧️";
+  if (/fog|mist|haze|smoke/.test(t)) return "🌫️";
+  if (/wind|breezy|blustery/.test(t) && !/cloud|sun|clear/.test(t)) return "💨";
+  if (/mostly cloudy|overcast/.test(t)) return "☁️";
+  if (/partly|mostly sunny|mostly clear|few clouds/.test(t)) return isDay ? "🌤️" : "☁️";
+  if (/cloud/.test(t)) return "☁️";
+  if (/sunny|clear|fair/.test(t)) return isDay ? "☀️" : "🌙";
+  return isDay ? "🌤️" : "🌙";
+}
+
+// The forecast time looks like "2026-11-22T15:00:00-06:00". Read the hour
+// straight from the text so it shows the forecast location's local time.
+function formatHourlyTime(startTime) {
+  const hour24 = Number(String(startTime).slice(11, 13));
+  if (Number.isNaN(hour24)) return "";
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  return `${hour24 % 12 || 12} ${suffix}`;
+}
+
+function formatHourlyDay(startTime) {
+  const [y, m, d] = String(startTime).slice(0, 10).split("-").map(Number);
+  if (!y) return "";
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function renderHourlyWeather() {
+  const section = document.getElementById("hourly-weather");
+  const strip = document.getElementById("hourly-weather-strip");
+  if (!section || !strip) return;
+
+  const hours = weatherState.status === "ready" && weatherState.data && weatherState.data.hourly
+    ? weatherState.data.hourly.slice(0, HOURLY_STRIP_HOURS) : null;
+
+  if (!hours || hours.length === 0) {
+    // Keep the old strip on screen while a refresh is loading.
+    if (weatherState.status === "loading" && strip.children.length) return;
+    section.classList.add("hidden");
+    strip.replaceChildren();
+    return;
+  }
+
+  const scrollLeft = strip.scrollLeft; // Don't jump back to the start on refresh.
+  strip.replaceChildren();
+
+  hours.forEach((hour, index) => {
+    const item = document.createElement("div");
+    item.className = "hourly-item" + (index === 0 ? " is-now" : "");
+    item.setAttribute("role", "listitem");
+
+    const time = document.createElement("span");
+    time.className = "hourly-time";
+    const hourText = formatHourlyTime(hour.startTime);
+    const isMidnight = hourText === "12 AM";
+    time.textContent = index === 0 ? "Now" : hourText;
+
+    // Label the first hour of a new day so later days are clear.
+    const day = document.createElement("span");
+    day.className = "hourly-day";
+    day.textContent = index > 0 && isMidnight ? formatHourlyDay(hour.startTime) : "";
+
+    const icon = document.createElement("span");
+    icon.className = "hourly-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = getWeatherIcon(hour.text, hour.isDaytime);
+
+    const temp = document.createElement("span");
+    temp.className = "hourly-temp";
+    temp.textContent = `${hour.temp}°F`;
+
+    const rain = document.createElement("span");
+    rain.className = "hourly-rain" + (hour.rainChance > 0 ? "" : " is-none");
+    rain.textContent = hour.rainChance > 0 ? `💧 ${hour.rainChance}%` : "";
+    if (hour.rainChance > 0) rain.title = "Chance of precipitation";
+
+    // One readable sentence for screen readers instead of separate pieces.
+    item.setAttribute("aria-label",
+      `${index === 0 ? "Now" : hourText}: ${hour.text}, ${hour.temp} degrees` +
+      (hour.rainChance > 0 ? `, ${hour.rainChance} percent chance of precipitation` : ""));
+    item.title = hour.text;
+
+    item.append(day, time, icon, temp, rain);
+    strip.appendChild(item);
+  });
+
+  section.classList.remove("hidden");
+  strip.scrollLeft = scrollLeft;
 }
 
 function refreshWeatherUi() {
   renderWeatherSummary();
+  renderHourlyWeather();
   renderOutfitPreview();
   // HEND: Keep the try-on screen's outfit list in sync with the weather pick.
   if (screenPreview.classList.contains("active")) renderVirtualPreview();
@@ -1457,6 +1733,9 @@ function renderOutfitPreview() {
   // Clear old cards so clicking Home does not create duplicates.
   grid.replaceChildren();
 
+  // Keep the "current weather / later" buttons and forecast note up to date.
+  renderOutfitTargetControls();
+
   // RAFAEL: Weather-based suggestion (null until the forecast has loaded).
   const suggestion = getOutfitSuggestion(closet);
 
@@ -1574,6 +1853,9 @@ function renderOutfitPreview() {
       manualOutfitIds[part.category] === selectedOutfitIds[part.category]);
     feedbackText.textContent = suggestion.explanation +
       (hasManual ? " Pieces you swapped by hand are kept." : "");
+  } else if (weatherState.status === "ready" && outfitTarget.mode === "later") {
+    feedbackText.textContent =
+      "Pick a time above to get an outfit for later. Until then this is a closet preview, not a suggestion.";
   } else {
     feedbackText.textContent = weatherState.status === "loading"
       ? "Loading weather to suggest an outfit…"
@@ -2159,12 +2441,16 @@ function saveCurrentOutfit() {
     return;
   }
 
-  const w = weatherState.status === "ready" ? weatherState.data : null;
+  // The weather the outfit was chosen for (the picked time, if it was for later).
+  const w = getOutfitWeather();
   list.unshift({
     id: "outfit_" + Date.now(),
     savedAt: Date.now(),
     items,
-    weather: w ? { band: getCurrentWeatherBand(), temp: w.nowTemp, condition: w.condition, location: w.location } : null
+    weather: w ? {
+      band: getCurrentWeatherBand(), temp: w.nowTemp, condition: w.condition,
+      location: w.location, forLabel: w.label || null
+    } : null
   });
   if (!setSavedOutfits(list)) {
     showSaveToast("Couldn't save: your browser storage is full.", false);
@@ -2180,7 +2466,8 @@ function describeSavedOutfit(outfit) {
   const date = new Date(outfit.savedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const weather = outfit.weather && outfit.weather.temp != null
     ? ` · ${outfit.weather.temp}°F, ${outfit.weather.condition}` : "";
-  return { title, meta: `Saved ${date}${weather}` };
+  const when = outfit.weather && outfit.weather.forLabel ? ` · for ${outfit.weather.forLabel}` : "";
+  return { title, meta: `Saved ${date}${when}${weather}` };
 }
 
 // Put a saved outfit back on Home (as hand-picked pieces), then open a screen.

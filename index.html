@@ -35,12 +35,35 @@
         <p id="outfit-weather-summary">
           Weather is currently unavailable.
         </p>
+
+        <!-- Hourly forecast strip: scroll sideways to see later hours. -->
+        <section id="hourly-weather" class="hourly-weather hidden" aria-labelledby="hourly-weather-title">
+          <div class="hourly-weather-head">
+            <h3 id="hourly-weather-title" class="hourly-weather-title">Hourly forecast</h3>
+            <span class="hourly-weather-hint" aria-hidden="true">Scroll for later hours →</span>
+          </div>
+          <div id="hourly-weather-strip" class="hourly-weather-strip" role="list" tabindex="0"
+            aria-label="Hourly forecast, scroll sideways for later hours"></div>
+        </section>
       </div>
 
       <!-- This section will display the suggested clothing combination. -->
       <div class="outfit-section">
         <h2>Suggested Outfit</h2>
         <p>View your outfit or open the editor to swap individual pieces.</p>
+
+        <!-- Choose what the outfit is for: the weather right now, or a time you pick. -->
+        <div class="outfit-target-bar">
+          <div class="compare-toggle" role="group" aria-label="When do you need this outfit?">
+            <button id="outfit-target-now" class="compare-btn active" type="button" aria-pressed="true">Outfit for current weather</button>
+            <button id="outfit-target-later" class="compare-btn" type="button" aria-pressed="false">Outfit for later</button>
+          </div>
+          <div id="outfit-later-picker" class="outfit-later-picker hidden">
+            <label for="outfit-later-time">I'm going out at</label>
+            <input type="time" id="outfit-later-time">
+          </div>
+        </div>
+        <p id="outfit-target-note" class="outfit-target-note" role="status"></p>
 
         <!-- JavaScript will add clothing cards using saved closet items.
          Each card will include its photo, name, and Replace button. -->
@@ -68,7 +91,7 @@
           ← Back to Home
         </button>
 
-        <h2>Today's Outfit</h2>
+        <h2 id="outfit-editor-heading">Today's Outfit</h2>
         <p>Swap individual pieces using items from your closet.</p>
 
         <!-- HEND: Compare the original suggestion with your changes, and save the outfit. -->
