@@ -1712,6 +1712,13 @@ const SAVED_OUTFITS_KEY = "wearther_saved_outfits";
 // is left behind in anyone's browser.
 const RETIRED_STORAGE_KEYS = ["wearther_gemini_api_key", "wearther_preview_provider", "wearther_hf_token"];
 
+// Our own try-on service (server/gemini-tryon-worker.js on Cloudflare). It keeps the
+// Gemini key on the server, so users are never asked for one. Paste the worker's
+// address here after deploying it, e.g. "https://wear-ther-tryon.<name>.workers.dev".
+// Leave it empty to use only the free Hugging Face try-on below.
+const TRYON_PROXY_URL = "";
+const TRYON_PROXY_TIMEOUT_MS = 120000;
+
 // Gradio's official JavaScript client, loaded only when someone tries the AI view.
 const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
 const HF_STEP_TIMEOUT_MS = 90000;   // Longest wait for one clothing piece.
@@ -2024,6 +2031,59 @@ async function generateWithHuggingFace(userPhoto, outfit, onProgress) {
   return { image: await blobToDataUrl(person), note };
 }
 
+// ---------- Gemini try-on through our own server (no key in the website) ----------
+// One request dresses the whole outfit, shoes included.
+async function generateWithGeminiProxy(userPhoto, outfit, onProgress) {
+  onProgress("Creating your preview with Gemini… this takes about 20–40 seconds.");
+  const garments = [];
+  for (const item of outfit) {
+    const image = splitDataUrl(await resizeToJpeg(item.image, GARMENT_MAX_PX));
+    garments.push({ category: item.category, name: item.name, color: item.color, ...image });
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TRYON_PROXY_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(TRYON_PROXY_URL.replace(/\/+$/, "") + "/tryon", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ person: splitDataUrl(userPhoto.image), garments }),
+      signal: controller.signal
+    });
+  } catch (err) {
+    const error = new PreviewError(err.name === "AbortError"
+      ? "The try-on service took too long." : "Could not reach the try-on service.");
+    error.reason = "offline";
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let body = null;
+  try { body = await response.json(); } catch { /* not JSON */ }
+  if (response.ok && body && body.image && body.image.data) {
+    return { image: `data:${body.image.mimeType || "image/png"};base64,${body.image.data}`, note: "" };
+  }
+  const error = new PreviewError((body && body.message) || `The try-on service returned an error (${response.status}).`);
+  error.reason = (body && body.error) || "offline";
+  throw error;
+}
+
+// Use our Gemini service when it is set up; otherwise (or if it is down) the free one.
+async function generateTryOn(userPhoto, outfit, onProgress) {
+  if (!TRYON_PROXY_URL) return generateWithHuggingFace(userPhoto, outfit, onProgress);
+  try {
+    return await generateWithGeminiProxy(userPhoto, outfit, onProgress);
+  } catch (err) {
+    // A declined photo would be declined by the free service too; don't wait for it.
+    if (err.reason === "blocked" || err.reason === "bad_request") throw err;
+    console.warn("Gemini try-on failed, using the free service instead:", err.message);
+    onProgress("Gemini is unavailable right now, so the free try-on service is being used…");
+    return generateWithHuggingFace(userPhoto, outfit, onProgress);
+  }
+}
+
 // ---------- Rendering the preview screen ----------
 const previewEls = {
   list: document.getElementById("preview-outfit-list"),
@@ -2177,7 +2237,9 @@ function renderVirtualPreview() {
   } else if (result && result.photoStamp === photo.stamp) {
     setPreviewPlaceholder("preview-person-icon", "Your outfit changed since the last try-on. Click Try It On My Photo to update it.");
   } else {
-    setPreviewPlaceholder("preview-person-icon", "Click Try It On My Photo to see this outfit on you (free AI beta, about 1–2 minutes).");
+    setPreviewPlaceholder("preview-person-icon", TRYON_PROXY_URL
+      ? "Click Try It On My Photo to see this outfit on you (AI, about 20–40 seconds)."
+      : "Click Try It On My Photo to see this outfit on you (free AI beta, about 1–2 minutes).");
   }
 
   // Buttons.
@@ -2253,7 +2315,7 @@ previewEls.generate.addEventListener("click", async () => {
   };
 
   try {
-    const generated = await generateWithHuggingFace(photo, outfit, onProgress);
+    const generated = await generateTryOn(photo, outfit, onProgress);
     // Store a smaller copy so it fits in browser storage.
     const image = await resizeToJpeg(generated.image, RESULT_MAX_PX, 0.9).catch(() => generated.image);
     previewState.result = {
