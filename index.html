@@ -16,6 +16,7 @@
     <nav class="nav-links" aria-label="Main">
       <button id="nav-home-btn" class="nav-btn active" type="button" aria-current="page">Home</button>
       <button id="nav-closet-btn" class="nav-btn" type="button">My Closet</button>
+      <button id="nav-saved-btn" class="nav-btn" type="button">Saved Outfits</button>
     </nav>
   </header>
 
@@ -34,12 +35,35 @@
         <p id="outfit-weather-summary">
           Weather is currently unavailable.
         </p>
+
+        <!-- Hourly forecast strip: scroll sideways to see later hours. -->
+        <section id="hourly-weather" class="hourly-weather hidden" aria-labelledby="hourly-weather-title">
+          <div class="hourly-weather-head">
+            <h3 id="hourly-weather-title" class="hourly-weather-title">Hourly forecast</h3>
+            <span class="hourly-weather-hint" aria-hidden="true">Scroll for later hours →</span>
+          </div>
+          <div id="hourly-weather-strip" class="hourly-weather-strip" role="list" tabindex="0"
+            aria-label="Hourly forecast, scroll sideways for later hours"></div>
+        </section>
       </div>
 
       <!-- This section will display the suggested clothing combination. -->
       <div class="outfit-section">
         <h2>Suggested Outfit</h2>
         <p>View your outfit or open the editor to swap individual pieces.</p>
+
+        <!-- Choose what the outfit is for: the weather right now, or a time you pick. -->
+        <div class="outfit-target-bar">
+          <div class="compare-toggle" role="group" aria-label="When do you need this outfit?">
+            <button id="outfit-target-now" class="compare-btn active" type="button" aria-pressed="true">Outfit for current weather</button>
+            <button id="outfit-target-later" class="compare-btn" type="button" aria-pressed="false">Outfit for later</button>
+          </div>
+          <div id="outfit-later-picker" class="outfit-later-picker hidden">
+            <label for="outfit-later-time">I'm going out at</label>
+            <input type="time" id="outfit-later-time">
+          </div>
+        </div>
+        <p id="outfit-target-note" class="outfit-target-note" role="status"></p>
 
         <!-- JavaScript will add clothing cards using saved closet items.
          Each card will include its photo, name, and Replace button. -->
@@ -67,8 +91,19 @@
           ← Back to Home
         </button>
 
-        <h2>Today's Outfit</h2>
+        <h2 id="outfit-editor-heading">Today's Outfit</h2>
         <p>Swap individual pieces using items from your closet.</p>
+
+        <!-- HEND: Compare the original suggestion with your changes, and save the outfit. -->
+        <div id="outfit-compare-bar" class="outfit-compare-bar">
+          <div class="compare-toggle" role="group" aria-label="Compare outfits">
+            <button id="outfit-view-modified" class="compare-btn active" type="button" aria-pressed="true">My outfit</button>
+            <button id="outfit-view-original" class="compare-btn" type="button" aria-pressed="false">Original suggestion</button>
+          </div>
+          <button id="outfit-save-btn" class="save-outfit-btn" type="button">★ Save Outfit</button>
+        </div>
+        <p id="outfit-compare-note" class="outfit-compare-note" role="status"></p>
+        <div id="outfit-original-grid" class="outfit-grid hidden"></div>
 
         <!-- JavaScript will display the editable outfit here. -->
         <div id="outfit-edit-grid" class="outfit-grid"></div>
@@ -94,7 +129,7 @@
       </div>
     </section>
 
-    <!-- HEND: VIRTUAL OUTFIT PREVIEW (AI try-on with Google Gemini) -->
+    <!-- HEND: OUTFIT PREVIEW (full outfit + optional AI try-on on the user's photo) -->
     <section id="screen-preview" class="screen-view" aria-labelledby="preview-heading">
       <div class="preview-top-bar">
         <h2 id="preview-heading">Virtual Outfit Preview</h2>
@@ -128,78 +163,61 @@
             </div>
           </div>
           <p class="helper-text preview-privacy">
-            Use a clear, full-body photo, standing and facing the camera. It is saved only in
-            this browser and is sent to the AI service (see AI settings) only when you click
-            Generate Preview.
+            Optional: add a clear, full-body photo (standing, facing the camera, feet visible) to
+            try the outfit on yourself. It is saved only in this browser and sent to Google
+            Gemini (through Wear-ther's try-on service) only when you click Try It On My Photo.
           </p>
         </div>
 
-        <!-- Right: the AI-generated result -->
+        <!-- Right: the preview. "Full outfit" always works; "On my photo" uses Gemini. -->
         <div class="preview-panel preview-result-panel">
-          <h3>Generated Preview</h3>
-          <div id="preview-result-stage" class="preview-result-stage" aria-live="polite">
-            <div id="preview-result-placeholder" class="preview-result-placeholder">
-              <span id="preview-result-icon" class="preview-person-icon" aria-hidden="true"></span>
-              <p id="preview-result-message">Upload a full-body photo to preview this outfit.</p>
+          <div class="preview-result-head">
+            <h3>Generated Preview</h3>
+            <div class="compare-toggle" role="group" aria-label="Preview type">
+              <button id="preview-view-board" class="compare-btn active" type="button" aria-pressed="true">Full outfit</button>
+              <button id="preview-view-photo" class="compare-btn" type="button" aria-pressed="false">On my photo</button>
             </div>
-            <img id="preview-result-img" class="preview-result-img hidden" src="" alt="">
           </div>
-          <p id="preview-result-caption" class="preview-result-caption hidden"></p>
-          <a id="preview-download" class="preview-mini-btn preview-download hidden" href="#" download="wearther-preview.png">Download image</a>
+
+          <!-- All four pieces arranged together: instant, no AI, never times out. -->
+          <div id="preview-board-view">
+            <div id="preview-flatlay" class="outfit-flatlay" aria-label="Your full outfit"></div>
+          </div>
+
+          <!-- AI try-on on the user's photo (optional). -->
+          <div id="preview-photo-view" class="hidden">
+            <div id="preview-result-stage" class="preview-result-stage" aria-live="polite">
+              <div id="preview-result-placeholder" class="preview-result-placeholder">
+                <span id="preview-result-icon" class="preview-person-icon" aria-hidden="true"></span>
+                <p id="preview-result-message">Upload a full-body photo to see this outfit on you.</p>
+                <button id="preview-see-board" class="preview-mini-btn hidden" type="button">See your full outfit</button>
+              </div>
+              <img id="preview-result-img" class="preview-result-img hidden" src="" alt="">
+            </div>
+            <p id="preview-result-caption" class="preview-result-caption hidden"></p>
+            <a id="preview-download" class="preview-mini-btn preview-download hidden" href="#" download="wearther-preview.jpg">Download image</a>
+          </div>
         </div>
       </div>
 
-      <button id="preview-generate-btn" class="primary-pill-btn preview-generate-btn" type="button" disabled>
-        Generate Preview →
-      </button>
+      <div class="preview-actions">
+        <button id="preview-generate-btn" class="primary-pill-btn preview-generate-btn" type="button" disabled>
+          Try It On My Photo →
+        </button>
+        <button id="preview-save-btn" class="save-outfit-btn" type="button">★ Save Outfit</button>
+      </div>
+    </section>
 
-      <!-- Which AI service makes the preview (settings stored only in this browser) -->
-      <details id="preview-settings" class="preview-settings">
-        <summary>AI settings</summary>
-
-        <fieldset class="preview-provider">
-          <legend>Which AI makes the preview?</legend>
-          <label>
-            <input type="radio" name="preview-provider" value="huggingface" checked>
-            <span><strong>Hugging Face (free)</strong>: dresses each piece in turn (top, bottom, jacket, then shoes). Takes about a minute; has a daily free limit.</span>
-          </label>
-          <label>
-            <input type="radio" name="preview-provider" value="gemini">
-            <span><strong>Google Gemini (paid)</strong>: dresses the whole outfit, including shoes. Needs an API key with billing turned on.</span>
-          </label>
-        </fieldset>
-
-        <div id="preview-hf-settings">
-          <p class="helper-text">
-            Works without an account. Free use has a daily limit; to raise it, create a free
-            Hugging Face account and paste a "Read" access token from
-            <strong>huggingface.co/settings/tokens</strong> (optional).
-          </p>
-          <form id="preview-hf-form" class="preview-key-form">
-            <label for="preview-hf-input" class="visually-hidden">Hugging Face token (optional)</label>
-            <input type="password" id="preview-hf-input" placeholder="Optional: hf_..." autocomplete="off">
-            <button type="submit" class="save-btn">Save token</button>
-            <button type="button" id="preview-hf-remove" class="cancel-btn">Remove</button>
-          </form>
-          <p id="preview-hf-status" class="helper-text" role="status"></p>
+    <!-- HEND: SAVED OUTFITS (complete combinations the user chose to keep) -->
+    <section id="screen-saved" class="screen-view" aria-labelledby="saved-heading">
+      <div class="closet-top-bar">
+        <div class="closet-title-wrap">
+          <h2 id="saved-heading">Saved Outfits</h2>
+          <span id="saved-count-badge" class="item-count-badge">0 outfits</span>
         </div>
-
-        <div id="preview-gemini-settings" class="hidden">
-          <p class="helper-text">
-            Paste your API key from <strong>aistudio.google.com/apikey</strong>. Gemini image
-            generation is not free (about $0.03 per image).
-          </p>
-          <form id="preview-key-form" class="preview-key-form">
-            <label for="preview-key-input" class="visually-hidden">Gemini API key</label>
-            <input type="password" id="preview-key-input" placeholder="Paste your Gemini API key" autocomplete="off">
-            <button type="submit" class="save-btn">Save key</button>
-            <button type="button" id="preview-key-remove" class="cancel-btn">Remove</button>
-          </form>
-          <p id="preview-key-status" class="helper-text" role="status"></p>
-        </div>
-
-        <p class="helper-text">Keys and tokens are saved only in this browser. Never commit them to GitHub.</p>
-      </details>
+      </div>
+      <p id="saved-status" class="closet-results-summary" role="status"></p>
+      <div id="saved-list" class="saved-list"></div>
     </section>
 
     <!-- MY CLOSET VIEW (Salwa's Work) -->
@@ -429,6 +447,12 @@
   </div>
 
   <!-- Undo toast shown after removing a closet item -->
+  <!-- HEND: Confirmation after saving or loading an outfit -->
+  <div id="save-toast" class="undo-toast" role="status" aria-live="polite">
+    <span id="save-toast-message" class="undo-toast-message"></span>
+    <button id="save-toast-btn" class="undo-toast-btn" type="button">View saved</button>
+  </div>
+
   <div id="undo-toast" class="undo-toast" role="status" aria-live="polite">
     <span id="undo-toast-message" class="undo-toast-message"></span>
     <button id="undo-toast-btn" class="undo-toast-btn" type="button">Undo</button>

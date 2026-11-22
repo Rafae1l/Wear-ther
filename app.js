@@ -782,6 +782,10 @@ const screenOutfit = document.getElementById("screen-outfit");
 // HEND: AI virtual try-on screen.
 const screenPreview = document.getElementById("screen-preview");
 
+// HEND: Saved Outfits screen and its navigation button.
+const screenSaved = document.getElementById("screen-saved");
+const savedBtn = document.getElementById("nav-saved-btn");
+
 // HEND: Navigation uses the address hash (#home, #closet, #closet/shoes)
 // so Back/Forward buttons and page refresh work like a normal website.
 function goToRoute(screen, category) {
@@ -800,7 +804,7 @@ function parseRoute() {
   const [screen, category] = location.hash.replace(/^#\/?/, "").split("/");
   return {
     // Recognize the outfit screen as another valid address.
-    screen: ["home", "closet", "outfit", "preview"].includes(screen) ? screen : "home",
+    screen: ["home", "closet", "outfit", "preview", "saved"].includes(screen) ? screen : "home",
     category: CLOSET_FILTERS.includes(category) ? category : "all"
   };
 }
@@ -814,17 +818,16 @@ function applyRoute() {
   screenHome.classList.toggle("active", screen === "home");
   screenOutfit.classList.toggle("active", screen === "outfit");
   screenPreview.classList.toggle("active", screen === "preview");
-  closetBtn.classList.toggle("active", showCloset);
-  homeBtn.classList.toggle("active", !showCloset);
+  screenSaved.classList.toggle("active", screen === "saved");
 
-  // Tell screen readers which page is current.
-  if (showCloset) {
-    closetBtn.setAttribute("aria-current", "page");
-    homeBtn.removeAttribute("aria-current");
-  } else {
-    homeBtn.setAttribute("aria-current", "page");
-    closetBtn.removeAttribute("aria-current");
-  }
+  // Highlight the matching nav button (the outfit and preview screens belong to Home)
+  // and tell screen readers which page is current.
+  const navFor = screen === "closet" ? closetBtn : screen === "saved" ? savedBtn : homeBtn;
+  [homeBtn, closetBtn, savedBtn].forEach(btn => {
+    btn.classList.toggle("active", btn === navFor);
+    if (btn === navFor) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
 
   if (showCloset) {
     renderCloset(category);
@@ -837,12 +840,16 @@ function applyRoute() {
   if (screen === "preview" && typeof renderVirtualPreview === "function") {
     renderVirtualPreview();
   }
+  if (screen === "saved" && typeof renderSavedOutfits === "function") {
+    renderSavedOutfits();
+  }
 
   if (!itemViewer.classList.contains("hidden")) closeItemViewer();
 }
 
 homeBtn.addEventListener("click", () => goToRoute("home"));
 closetBtn.addEventListener("click", () => goToRoute("closet", closetView.category));
+savedBtn.addEventListener("click", () => goToRoute("saved"));
 window.addEventListener("hashchange", applyRoute);
 
 // Initialize the closet grid on first page load (the route is applied at the
@@ -863,8 +870,165 @@ const WEATHER_CACHE_KEY = "wearther_weather_cache";
 const WEATHER_LOCATION_KEY = "wearther_last_location";
 const WEATHER_MAX_AGE_MS = 30 * 60 * 1000; // Reuse a forecast for 30 minutes.
 const WEATHER_WINDOW_HOURS = 12;           // "Today" = the next 12 hours.
+const HOURLY_STRIP_HOURS = 24;             // Hours shown in the scrollable strip.
+const HOURLY_DATA_HOURS = 48;              // Hours kept so "Outfit for later" can use any time.
+const WEATHER_SCHEMA = 2;                  // Bump when the saved forecast changes shape.
 
 const weatherState = { status: "loading", data: null, message: "", stale: false };
+
+// ================= OUTFIT TARGET: CURRENT WEATHER OR LATER =================
+// The outfit can be for the weather right now, or for a time the user plans to go
+// out. "Later" finds that hour in the hourly forecast and uses a short window of
+// hours starting there, so the same outfit rules apply to it.
+const OUTFIT_LATER_WINDOW_HOURS = 4;
+const outfitTarget = { mode: "now", time: "" }; // time looks like "17:30"
+
+// Hand-picked swaps are remembered for each target: a new time starts fresh,
+// and coming back to an earlier target restores its swaps.
+const manualOutfitStash = {};
+
+const outfitTargetEls = {
+  nowBtn: document.getElementById("outfit-target-now"),
+  laterBtn: document.getElementById("outfit-target-later"),
+  picker: document.getElementById("outfit-later-picker"),
+  timeInput: document.getElementById("outfit-later-time"),
+  note: document.getElementById("outfit-target-note"),
+  heading: document.getElementById("outfit-editor-heading")
+};
+
+// Forecast times look like "2026-11-22T15:00:00-06:00"; read the hour from the text
+// so it is the forecast location's local hour.
+function forecastHour(startTime) {
+  return Number(String(startTime).slice(11, 13));
+}
+
+// "17:30" -> "5:30 PM"
+function formatClock(timeText) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(timeText || "");
+  if (!match) return "";
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+// A weather snapshot for the chosen time, shaped like the "now" forecast so the
+// outfit rules can read either one. Returns null until a valid time is picked.
+function getLaterWeather() {
+  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  const hours = weatherState.data.hourly;
+  const match = /^(\d{1,2}):\d{2}$/.exec(outfitTarget.time || "");
+  if (!Array.isArray(hours) || hours.length === 0 || !match) return null;
+
+  // The next time the forecast reaches that hour: later today, or tomorrow
+  // if that hour has already passed.
+  const wantedHour = Number(match[1]);
+  const startIndex = hours.findIndex(hour => forecastHour(hour.startTime) === wantedHour);
+  if (startIndex === -1) return null;
+
+  const span = hours.slice(startIndex, startIndex + OUTFIT_LATER_WINDOW_HOURS);
+  const feels = span.map(hour => hour.feels ?? hour.temp);
+  const rainChance = Math.max(...span.map(hour => hour.rainChance || 0));
+  const allText = span.map(hour => hour.text).join(" | ");
+  const isTomorrow = String(hours[startIndex].startTime).slice(0, 10) !==
+    String(hours[0].startTime).slice(0, 10);
+
+  return {
+    location: weatherState.data.location,
+    nowTemp: span[0].temp,
+    nowFeels: Math.round(feels[0]),
+    condition: span[0].text,
+    isDaytime: span[0].isDaytime,
+    avgFeels: feels.reduce((sum, t) => sum + t, 0) / feels.length,
+    lowFeels: Math.min(...feels),
+    maxWind: Math.max(...span.map(hour => hour.wind || 0)),
+    maxRainChance: rainChance,
+    rain: rainChance >= OUTFIT_RULES.rainChance || OUTFIT_RULES.rainWords.test(allText),
+    snow: OUTFIT_RULES.snowWords.test(allText),
+    hoursCovered: span.length,
+    label: formatClock(outfitTarget.time) + (isTomorrow ? " tomorrow" : "")
+  };
+}
+
+// The weather the outfit is being chosen for (null while it isn't available).
+function getOutfitWeather() {
+  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  return outfitTarget.mode === "later" ? getLaterWeather() : weatherState.data;
+}
+
+// Suggested time when "Outfit for later" is first chosen: about 3 hours from now.
+function defaultLaterTime() {
+  const hours = weatherState.data && weatherState.data.hourly;
+  let hour = Array.isArray(hours) && hours.length
+    ? forecastHour(hours[Math.min(3, hours.length - 1)].startTime)
+    : NaN;
+  if (Number.isNaN(hour)) hour = (new Date().getHours() + 3) % 24;
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function outfitTargetKey() {
+  return outfitTarget.mode === "later" ? "later|" + outfitTarget.time : "now";
+}
+
+function setOutfitTarget(mode, time) {
+  const before = outfitTargetKey();
+  outfitTarget.mode = mode;
+  if (time !== undefined) outfitTarget.time = time;
+  const after = outfitTargetKey();
+
+  if (before !== after) {
+    manualOutfitStash[before] = { ...manualOutfitIds };
+    Object.keys(manualOutfitIds).forEach(key => delete manualOutfitIds[key]);
+    Object.assign(manualOutfitIds, manualOutfitStash[after] || {});
+    outfitCompare.view = "modified";
+  }
+  renderOutfitPreview();
+}
+
+// Update the two buttons, the time box, the forecast note, and the editor heading.
+function renderOutfitTargetControls() {
+  const els = outfitTargetEls;
+  const later = outfitTarget.mode === "later";
+  els.nowBtn.classList.toggle("active", !later);
+  els.nowBtn.setAttribute("aria-pressed", String(!later));
+  els.laterBtn.classList.toggle("active", later);
+  els.laterBtn.setAttribute("aria-pressed", String(later));
+  els.picker.classList.toggle("hidden", !later);
+
+  const w = later ? getOutfitWeather() : null;
+  let text = "";
+  if (later) {
+    if (weatherState.status === "loading") {
+      text = "Loading the forecast…";
+    } else if (weatherState.status === "error") {
+      text = "Weather is unavailable, so an outfit for later can't be suggested.";
+    } else if (!outfitTarget.time) {
+      text = "Pick a time to see an outfit for when you go out.";
+    } else if (!w) {
+      text = "That time is outside the forecast we have. Try another time.";
+    } else {
+      const n = w.hoursCovered;
+      text = `${getWeatherIcon(w.condition, w.isDaytime)} ${w.label}: ${w.condition}, ${w.nowTemp}°F` +
+        (w.maxRainChance > 0 ? `, up to ${w.maxRainChance}% chance of precipitation` : "") +
+        `. This outfit covers about ${n} hour${n === 1 ? "" : "s"} from then.`;
+    }
+  }
+  els.note.textContent = text;
+
+  if (els.heading) {
+    els.heading.textContent = later && w ? `Outfit for ${w.label}` : "Today's Outfit";
+  }
+}
+
+outfitTargetEls.nowBtn.addEventListener("click", () => setOutfitTarget("now"));
+outfitTargetEls.laterBtn.addEventListener("click", () => {
+  const time = outfitTarget.time || defaultLaterTime();
+  outfitTargetEls.timeInput.value = time;
+  setOutfitTarget("later", time);
+  outfitTargetEls.timeInput.focus();
+});
+outfitTargetEls.timeInput.addEventListener("change", () => {
+  setOutfitTarget("later", outfitTargetEls.timeInput.value);
+});
+// ----- end outfit target -----
 
 // ----- Outfit rules: how weather conditions connect to clothing labels -----
 // Every closet piece is labeled "warm", "cool", "cold", and/or "all" (All weather).
@@ -974,8 +1138,25 @@ async function fetchNwsJson(url) {
 
 // Turn the raw hourly forecast into the few numbers the outfit rules need.
 function summarizeForecast(points, hourly) {
-  const periods = hourly.properties.periods.slice(0, WEATHER_WINDOW_HOURS);
+  const allPeriods = hourly.properties.periods;
+  const periods = allPeriods.slice(0, WEATHER_WINDOW_HOURS);
   if (periods.length === 0) throw new Error("The forecast had no data.");
+
+  // The next 48 hours. The first 24 fill the scrollable strip on Home, and all of
+  // them let "Outfit for later" look up any time of day.
+  const hourlyStrip = allPeriods.slice(0, HOURLY_DATA_HOURS).map(period => {
+    const temp = toFahrenheit(period);
+    const wind = parseWindMph(period.windSpeed);
+    return {
+      startTime: period.startTime,
+      isDaytime: period.isDaytime !== false,
+      temp: Math.round(temp),
+      wind,
+      feels: calculateFeelsLike(temp, wind),
+      rainChance: period.probabilityOfPrecipitation?.value ?? 0,
+      text: period.shortForecast || ""
+    };
+  });
 
   const hours = periods.map(period => {
     const temp = toFahrenheit(period);
@@ -997,6 +1178,8 @@ function summarizeForecast(points, hourly) {
   return {
     location: place ? `${place.city}, ${place.state}` : "Your location",
     updated: Date.now(),
+    schema: WEATHER_SCHEMA,
+    hourly: hourlyStrip,
     nowTemp: Math.round(hours[0].temp),
     nowFeels: Math.round(hours[0].feels),
     condition: hours[0].text,
@@ -1038,7 +1221,9 @@ function getBrowserPosition() {
 // Load the forecast. Reuses a recent one unless force is true.
 async function loadWeather(force = false) {
   const cached = readWeatherCache();
-  if (!force && cached && Date.now() - cached.data.updated < WEATHER_MAX_AGE_MS) {
+  // A forecast saved by an older version lacks the hourly details, so refetch it.
+  if (!force && cached && cached.data.schema === WEATHER_SCHEMA &&
+    Date.now() - cached.data.updated < WEATHER_MAX_AGE_MS) {
     weatherState.status = "ready";
     weatherState.data = cached.data;
     weatherState.stale = false;
@@ -1104,9 +1289,8 @@ const OUTFIT_CATEGORIES = ["top", "bottom", "outerwear", "shoes"];
 
 // The weather type being dressed for, or null while no forecast is available.
 function getCurrentWeatherBand() {
-  return weatherState.status === "ready" && weatherState.data
-    ? getTemperatureBand(weatherState.data.avgFeels)
-    : null;
+  const w = getOutfitWeather();
+  return w ? getTemperatureBand(w.avgFeels) : null;
 }
 
 // RULE 4: labeled for this band, or labeled "All weather".
@@ -1176,9 +1360,10 @@ function scoreClothingItem(item, band, weather) {
 
 // Returns { picks, skipped, empty, explanation, band } or null when there is no weather.
 function getOutfitSuggestion(closet) {
-  if (weatherState.status !== "ready" || !weatherState.data) return null;
+  // The weather for the chosen time: right now, or the time picked for "later".
+  const w = getOutfitWeather();
+  if (!w) return null;
 
-  const w = weatherState.data;
   const band = getTemperatureBand(w.avgFeels);
 
   // Keep hand-picked pieces only while they still fit the weather.
@@ -1260,10 +1445,10 @@ function getOutfitSuggestion(closet) {
     : `around ${w.nowTemp}°F`;
   const wet = w.snow ? ", snow likely" : w.rain ? ", rain likely" : "";
   const explanation =
-    `Chosen for ${feelsText}${wet}: every piece is labeled "${band}" or "All weather" and the colors match` +
+    `Chosen for ${w.label ? w.label + ", " : ""}${feelsText}${wet}: every piece is labeled "${band}" or "All weather" and the colors match` +
     (notes.length ? ` (${notes.join("; ")})` : "") + ".";
 
-  return { picks, skipped, empty, explanation, band };
+  return { picks, skipped, empty, explanation, band, label: w.label || "" };
 }
 
 // ----- Showing the weather in the existing Home panel -----
@@ -1317,12 +1502,110 @@ function renderWeatherSummary() {
   addBlock("weather-detail", `Wind: up to ${w.maxWind} mph`);
 
   const suggestion = getOutfitSuggestion(getStoredCloset());
-  if (suggestion) addBlock("weather-detail", `Dressing for: ${suggestion.band} weather`);
+  if (suggestion) {
+    addBlock("weather-detail", `Dressing for: ${suggestion.band} weather` +
+      (suggestion.label ? ` (outfit for ${suggestion.label})` : ""));
+  }
   if (weatherState.stale) addBlock("weather-detail", "Showing an older forecast (could not refresh).");
+}
+
+// ----- Hourly strip: icon, time, temperature, and precipitation per hour -----
+function getWeatherIcon(text, isDay) {
+  const t = String(text || "").toLowerCase();
+  if (/thunder|storm/.test(t)) return "⛈️";
+  if (/snow|flurr|blizzard/.test(t)) return "🌨️";
+  if (/sleet|ice|freezing|wintry/.test(t)) return "🌨️";
+  if (/rain|shower|drizzle/.test(t)) return "🌧️";
+  if (/fog|mist|haze|smoke/.test(t)) return "🌫️";
+  if (/wind|breezy|blustery/.test(t) && !/cloud|sun|clear/.test(t)) return "💨";
+  if (/mostly cloudy|overcast/.test(t)) return "☁️";
+  if (/partly|mostly sunny|mostly clear|few clouds/.test(t)) return isDay ? "🌤️" : "☁️";
+  if (/cloud/.test(t)) return "☁️";
+  if (/sunny|clear|fair/.test(t)) return isDay ? "☀️" : "🌙";
+  return isDay ? "🌤️" : "🌙";
+}
+
+// The forecast time looks like "2026-11-22T15:00:00-06:00". Read the hour
+// straight from the text so it shows the forecast location's local time.
+function formatHourlyTime(startTime) {
+  const hour24 = Number(String(startTime).slice(11, 13));
+  if (Number.isNaN(hour24)) return "";
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  return `${hour24 % 12 || 12} ${suffix}`;
+}
+
+function formatHourlyDay(startTime) {
+  const [y, m, d] = String(startTime).slice(0, 10).split("-").map(Number);
+  if (!y) return "";
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function renderHourlyWeather() {
+  const section = document.getElementById("hourly-weather");
+  const strip = document.getElementById("hourly-weather-strip");
+  if (!section || !strip) return;
+
+  const hours = weatherState.status === "ready" && weatherState.data && weatherState.data.hourly
+    ? weatherState.data.hourly.slice(0, HOURLY_STRIP_HOURS) : null;
+
+  if (!hours || hours.length === 0) {
+    // Keep the old strip on screen while a refresh is loading.
+    if (weatherState.status === "loading" && strip.children.length) return;
+    section.classList.add("hidden");
+    strip.replaceChildren();
+    return;
+  }
+
+  const scrollLeft = strip.scrollLeft; // Don't jump back to the start on refresh.
+  strip.replaceChildren();
+
+  hours.forEach((hour, index) => {
+    const item = document.createElement("div");
+    item.className = "hourly-item" + (index === 0 ? " is-now" : "");
+    item.setAttribute("role", "listitem");
+
+    const time = document.createElement("span");
+    time.className = "hourly-time";
+    const hourText = formatHourlyTime(hour.startTime);
+    const isMidnight = hourText === "12 AM";
+    time.textContent = index === 0 ? "Now" : hourText;
+
+    // Label the first hour of a new day so later days are clear.
+    const day = document.createElement("span");
+    day.className = "hourly-day";
+    day.textContent = index > 0 && isMidnight ? formatHourlyDay(hour.startTime) : "";
+
+    const icon = document.createElement("span");
+    icon.className = "hourly-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = getWeatherIcon(hour.text, hour.isDaytime);
+
+    const temp = document.createElement("span");
+    temp.className = "hourly-temp";
+    temp.textContent = `${hour.temp}°F`;
+
+    const rain = document.createElement("span");
+    rain.className = "hourly-rain" + (hour.rainChance > 0 ? "" : " is-none");
+    rain.textContent = hour.rainChance > 0 ? `💧 ${hour.rainChance}%` : "";
+    if (hour.rainChance > 0) rain.title = "Chance of precipitation";
+
+    // One readable sentence for screen readers instead of separate pieces.
+    item.setAttribute("aria-label",
+      `${index === 0 ? "Now" : hourText}: ${hour.text}, ${hour.temp} degrees` +
+      (hour.rainChance > 0 ? `, ${hour.rainChance} percent chance of precipitation` : ""));
+    item.title = hour.text;
+
+    item.append(day, time, icon, temp, rain);
+    strip.appendChild(item);
+  });
+
+  section.classList.remove("hidden");
+  strip.scrollLeft = scrollLeft;
 }
 
 function refreshWeatherUi() {
   renderWeatherSummary();
+  renderHourlyWeather();
   renderOutfitPreview();
   // HEND: Keep the try-on screen's outfit list in sync with the weather pick.
   if (screenPreview.classList.contains("active")) renderVirtualPreview();
@@ -1333,6 +1616,150 @@ const manualOutfitIds = {};
 
 // Refresh the forecast every 30 minutes while the page stays open.
 setInterval(() => loadWeather(true), WEATHER_MAX_AGE_MS);
+
+// ================= HEND: SWAP HIGHLIGHT + ORIGINAL vs. MODIFIED =================
+// (Defined before renderOutfitPreview runs, because it uses these.)
+
+// Which card was just swapped, so it can be highlighted for a few seconds.
+const outfitSwapHighlight = { category: null, timer: null };
+const SWAP_HIGHLIGHT_MS = 4000;
+
+function markOutfitSwap(category) {
+  outfitSwapHighlight.category = category;
+  clearTimeout(outfitSwapHighlight.timer);
+  outfitSwapHighlight.timer = setTimeout(() => {
+    outfitSwapHighlight.category = null;
+    document.querySelectorAll(".garment-card.just-swapped").forEach(card => {
+      card.classList.remove("just-swapped");
+      card.querySelector(".swap-badge")?.remove();
+    });
+  }, SWAP_HIGHLIGHT_MS);
+}
+
+// Add the highlight + "Updated" badge to the card that was just swapped.
+function decorateSwappedCard(card, category) {
+  if (outfitSwapHighlight.category !== category) return;
+  card.classList.add("just-swapped");
+  const badge = document.createElement("span");
+  badge.className = "swap-badge";
+  badge.textContent = "Updated";
+  card.appendChild(badge);
+}
+
+// "My outfit" (with the user's swaps) or "Original suggestion".
+const outfitCompare = { view: "modified" };
+
+// The outfit Wear-ther suggested before any manual swaps.
+function getOriginalOutfitPicks(closet) {
+  const saved = { ...manualOutfitIds };
+  Object.keys(manualOutfitIds).forEach(key => delete manualOutfitIds[key]);
+  let suggestion = null;
+  try {
+    suggestion = getOutfitSuggestion(closet);
+  } finally {
+    Object.assign(manualOutfitIds, saved); // Put the user's swaps back.
+  }
+  const picks = {};
+  OUTFIT_CATEGORIES.forEach(category => {
+    picks[category] = suggestion
+      ? suggestion.picks[category] || null
+      : closet.find(item => item.category === category) || null;
+  });
+  return picks;
+}
+
+function buildCompareCard(category, item, changed) {
+  const label = getCategoryLabel(category);
+  const card = document.createElement("div");
+  card.className = `garment-card cat-${category}` + (changed ? " is-different" : "");
+  const title = document.createElement("h3");
+  title.textContent = label;
+  card.appendChild(title);
+  if (item) {
+    const image = document.createElement("img");
+    image.src = item.image;
+    image.alt = item.name;
+    const name = document.createElement("h4");
+    name.textContent = item.name;
+    card.append(image, name);
+  } else {
+    const none = document.createElement("p");
+    none.textContent = `No ${label.toLowerCase()}`;
+    card.appendChild(none);
+  }
+  if (changed) {
+    const tag = document.createElement("span");
+    tag.className = "swap-badge is-original";
+    tag.textContent = "You changed this";
+    card.appendChild(tag);
+  }
+  return card;
+}
+
+// Update the toggle, the note, and which grid is visible on the outfit editor.
+function updateOutfitCompare() {
+  const editGrid = document.getElementById("outfit-edit-grid");
+  const originalGrid = document.getElementById("outfit-original-grid");
+  const modifiedBtn = document.getElementById("outfit-view-modified");
+  const originalBtn = document.getElementById("outfit-view-original");
+  const note = document.getElementById("outfit-compare-note");
+  if (!editGrid || !originalGrid || !modifiedBtn) return;
+
+  const closet = getStoredCloset();
+  const original = getOriginalOutfitPicks(closet);
+  const changed = OUTFIT_CATEGORIES.filter(category =>
+    ((original[category] && original[category].id) || null) !== (selectedOutfitIds[category] || null));
+  const hasChanges = changed.length > 0;
+  if (!hasChanges) outfitCompare.view = "modified";
+  const showOriginal = outfitCompare.view === "original";
+
+  modifiedBtn.classList.toggle("active", !showOriginal);
+  modifiedBtn.setAttribute("aria-pressed", String(!showOriginal));
+  originalBtn.classList.toggle("active", showOriginal);
+  originalBtn.setAttribute("aria-pressed", String(showOriginal));
+  originalBtn.disabled = !hasChanges;
+  originalBtn.title = hasChanges ? "" : "Swap a piece first; then you can compare.";
+
+  editGrid.classList.toggle("hidden", showOriginal);
+  originalGrid.classList.toggle("hidden", !showOriginal);
+  note.replaceChildren();
+
+  const changedNames = changed.map(category => getCategoryLabel(category).toLowerCase()).join(", ");
+  if (!hasChanges) {
+    note.textContent = "This is Wear-ther's original suggestion. Swap a piece to compare it with your changes.";
+  } else if (!showOriginal) {
+    note.textContent = `You changed: ${changedNames}. Click "Original suggestion" to compare.`;
+  } else {
+    note.append(`Wear-ther's original suggestion. Pieces you changed are marked (${changedNames}). `);
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.className = "preview-mini-btn";
+    restore.textContent = "Go back to the original";
+    restore.addEventListener("click", restoreOriginalOutfit);
+    note.appendChild(restore);
+  }
+
+  if (showOriginal) {
+    originalGrid.replaceChildren(...OUTFIT_CATEGORIES.map(category =>
+      buildCompareCard(category, original[category], changed.includes(category))));
+  }
+}
+
+function setOutfitCompareView(view) {
+  outfitCompare.view = view;
+  if (view === "original" && typeof closeOutfitReplacement === "function") closeOutfitReplacement(false);
+  updateOutfitCompare();
+}
+
+function restoreOriginalOutfit() {
+  Object.keys(manualOutfitIds).forEach(key => delete manualOutfitIds[key]);
+  outfitCompare.view = "modified";
+  renderOutfitPreview();
+  document.getElementById("outfit-feedback").textContent = "Back to Wear-ther's original suggestion.";
+}
+
+document.getElementById("outfit-view-modified").addEventListener("click", () => setOutfitCompareView("modified"));
+document.getElementById("outfit-view-original").addEventListener("click", () => setOutfitCompareView("original"));
 
 function renderOutfitPreview() {
   // Read clothing already saved by the closet/upload interface.
@@ -1346,6 +1773,9 @@ function renderOutfitPreview() {
 
   // Clear old cards so clicking Home does not create duplicates.
   grid.replaceChildren();
+
+  // Keep the "current weather / later" buttons and forecast note up to date.
+  renderOutfitTargetControls();
 
   // RAFAEL: Weather-based suggestion (null until the forecast has loaded).
   const suggestion = getOutfitSuggestion(closet);
@@ -1418,6 +1848,7 @@ function renderOutfitPreview() {
       // Show individual replacement buttons only on the editing screen.
       if (screenOutfit.classList.contains("active")) {
         card.appendChild(replaceButton);
+        decorateSwappedCard(card, part.category); // HEND: highlight the swapped card.
       }
     } else if (suggestion && suggestion.skipped.includes(part.category)) {
       // RAFAEL: The weather rules say this layer isn't needed today.
@@ -1463,11 +1894,17 @@ function renderOutfitPreview() {
       manualOutfitIds[part.category] === selectedOutfitIds[part.category]);
     feedbackText.textContent = suggestion.explanation +
       (hasManual ? " Pieces you swapped by hand are kept." : "");
+  } else if (weatherState.status === "ready" && outfitTarget.mode === "later") {
+    feedbackText.textContent =
+      "Pick a time above to get an outfit for later. Until then this is a closet preview, not a suggestion.";
   } else {
     feedbackText.textContent = weatherState.status === "loading"
       ? "Loading weather to suggest an outfit…"
       : "Weather is unavailable, so this is a closet preview, not a suggestion.";
   }
+
+  // HEND: Keep the Original vs. Modified toggle up to date on the editor.
+  if (screenOutfit.classList.contains("active")) updateOutfitCompare();
 }
 
 // Refresh the cards when the user returns to Home after editing their closet.
@@ -1550,6 +1987,7 @@ function showOutfitReplacements(category, label) {
       // Replace this category only, keeping the other pieces selected.
       selectedOutfitIds[category] = replacement.id;
       manualOutfitIds[category] = replacement.id; // Keep it when weather updates.
+      markOutfitSwap(category); // HEND: highlight this card after it re-renders.
       renderOutfitPreview();
       closeOutfitReplacement();
 
@@ -1581,54 +2019,29 @@ closetBtn.addEventListener("click", () => {
   closeOutfitReplacement(false);
 });
 
-// ================= HEND: VIRTUAL OUTFIT PREVIEW (AI try-on) =================
-// The user uploads one full-body photo (saved in this browser). When they click
-// Generate Preview, we send that photo plus the photos of the suggested outfit
-// pieces to an AI service, which returns a picture of them wearing the outfit.
-//   - Hugging Face (default, free): open-source try-on models, one piece at a time.
-//   - Google Gemini (paid): whole outfit in one request; needs a key with billing.
+// ================= HEND: OUTFIT PREVIEW + SAVED OUTFITS =================
+// The preview screen has two views:
+//   "Full outfit"        - all four pieces arranged together. Instant, no AI and no
+//                          key, so it always works and can never time out.
+//   "On my photo"        - AI try-on on the user's own photo through Google Gemini,
+//                          via our own server (server/gemini-tryon-worker.js), which
+//                          holds the key. The website never asks for an API key.
+// Users are never asked to type an API key (TA feedback): a key cannot be kept
+// safe inside a public website, and the request confused participants.
 
 const USER_PHOTO_KEY = "wearther_user_photo";
 const PREVIEW_RESULT_KEY = "wearther_outfit_preview";
-const GEMINI_KEY_STORAGE = "wearther_gemini_api_key";
-const PREVIEW_PROVIDER_KEY = "wearther_preview_provider";
-const HF_TOKEN_KEY = "wearther_hf_token";
+const SAVED_OUTFITS_KEY = "wearther_saved_outfits";
+// Keys and settings that older versions asked for. Deleted on load so no secret
+// is left behind in anyone's browser.
+const RETIRED_STORAGE_KEYS = ["wearther_gemini_api_key", "wearther_preview_provider", "wearther_hf_token"];
 
-// Gradio's official JavaScript client, loaded only when a free preview is made.
-const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
-const HF_STEP_TIMEOUT_MS = 180000; // Includes time waiting in the free queue.
-
-// Free try-on demos on Hugging Face, best first. If one is down, the next is tried.
-// Tops and outerwear: IDM-VTON gives the cleanest results (Nymbo's is a copy of it).
-const HF_UPPER_BODY_SERVICES = [
-  { space: "yisol/IDM-VTON", kind: "idm" },
-  { space: "Nymbo/Virtual-Try-On", kind: "idm" },
-  { space: "levihsu/OOTDiffusion", kind: "ootd-upper" }
-];
-// Bottoms: only OOTDiffusion supports lower-body clothing.
-const HF_LOWER_BODY_SERVICES = [
-  { space: "levihsu/OOTDiffusion", kind: "ootd-lower" }
-];
-// Shoes: try-on models don't do shoes, so we use general image editors that take
-// several pictures ("put the shoes from image 2 on the person in image 1").
-// FLUX.2 is first because it uses the least free GPU time (~65s with 20 steps).
-const HF_SHOE_SERVICES = [
-  { space: "black-forest-labs/FLUX.2-dev", kind: "flux2-edit" },
-  { space: "Qwen/Qwen-Image-Edit-2511", kind: "qwen-edit" },
-  { space: "Qwen/Qwen-Image-Edit-2509", kind: "qwen-edit" }
-];
-const SHOE_EDIT_PROMPT =
-  "Image 1 shows a person. Image 2 shows a pair of shoes. Edit image 1 so the person is " +
-  "wearing the shoes from image 2, with the same color, style and details. Keep everything " +
-  "else in image 1 exactly the same: face, hair, body, pose, clothing, background, lighting and framing.";
-
-// Order the pieces are put on (shoes last, on the finished outfit).
-const HF_DRESSING_ORDER = ["top", "bottom", "outerwear", "shoes"];
-
-// Gemini image model ("Nano Banana"). Change here if Google renames it.
-const GEMINI_IMAGE_MODEL = "gemini-nano-banana-2.1";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_TIMEOUT_MS = 120000;
+// Our own try-on service (server/gemini-tryon-worker.js on Cloudflare). It keeps the
+// Gemini key on the server, so users are never asked for one. Paste the worker's
+// address here after deploying it, e.g. "https://wear-ther-tryon.<name>.workers.dev".
+// The address is not secret; the key itself is stored only in Cloudflare.
+const TRYON_PROXY_URL = "https://wear-ther-tryon.alawihend.workers.dev";
+const TRYON_PROXY_TIMEOUT_MS = 120000;
 
 // Keep images small enough for localStorage and fast to upload.
 const USER_PHOTO_MAX_PX = 1024;
@@ -1636,11 +2049,11 @@ const GARMENT_MAX_PX = 768;
 const RESULT_MAX_PX = 1024;
 
 const previewState = {
+  view: "board",    // board | photo
   status: "idle",   // idle | generating | error
   error: "",
-  progress: "",     // e.g. "Step 1 of 3: putting on Black T-shirt…"
-  result: null,     // { image, note, outfitKey, photoStamp, createdAt }
-  photoStamp: ""    // changes whenever a new photo is uploaded
+  progress: "",     // e.g. "Step 1 of 4: putting on Black T-shirt…"
+  result: null      // { image, note, outfitKey, photoStamp, createdAt }
 };
 
 // ---------- Small storage helpers (never crash if storage is full/blocked) ----------
@@ -1653,6 +2066,7 @@ function writeStorage(key, value) {
 function removeStorage(key) {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
+RETIRED_STORAGE_KEYS.forEach(removeStorage);
 
 function getUserPhoto() {
   const raw = readStorage(USER_PHOTO_KEY);
@@ -1660,16 +2074,14 @@ function getUserPhoto() {
   try { return JSON.parse(raw); } catch { return null; } // { image, stamp }
 }
 
-function getGeminiKey() {
-  return (readStorage(GEMINI_KEY_STORAGE) || "").trim();
-}
+class PreviewError extends Error {}
 
 // ---------- Image helpers ----------
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Could not read that image."));
+    img.onerror = () => reject(new PreviewError("Could not read that image."));
     img.src = src;
   });
 }
@@ -1693,7 +2105,7 @@ function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.onerror = () => reject(new PreviewError("Could not read that file."));
     reader.readAsDataURL(file);
   });
 }
@@ -1716,434 +2128,49 @@ function getOutfitKey(outfit) {
   return outfit.map(item => item.id).join("|");
 }
 
-// ---------- Gemini request ----------
-function buildTryOnPrompt(outfit) {
-  const list = outfit
-    .map((item, i) => `Image ${i + 2}: ${getCategoryLabel(item.category).toLowerCase()} – "${item.name}" (${item.color})`)
-    .join("\n");
-
-  return [
-    "Virtual try-on.",
-    "Image 1 is a photo of a person. The other images are clothing items from their own closet:",
-    list,
-    "",
-    "Create one realistic, full-body photo of the SAME person from image 1 wearing exactly these clothing items.",
-    "Keep their face, hair, skin tone, body shape and pose the same.",
-    "Keep each clothing item's color, pattern and style the same as in its photo.",
-    "Replace whatever they are currently wearing with these items. Do not add other clothing, accessories, logos or text.",
-    "Use a plain, light studio background with soft, natural lighting."
-  ].join("\n");
-}
-
-class PreviewError extends Error {
-  constructor(message, { canFallback = false } = {}) {
-    super(message);
-    this.canFallback = canFallback;
-  }
-}
-
-// Turn an HTTP error into a message a user can act on.
-async function toPreviewError(response) {
-  let detail = "";
-  try {
-    const body = await response.json();
-    detail = (body.error && body.error.message) || "";
-  } catch { /* not JSON */ }
-
-  const keyProblem = /api key|API_KEY|permission|unauthori[sz]ed/i.test(detail);
-  if (response.status === 401 || response.status === 403 || (response.status === 400 && keyProblem)) {
-    return new PreviewError("Gemini did not accept the API key. Check the key under \"Gemini API key\" below.");
-  }
-  if (response.status === 429) {
-    // Gemini's image models have NO free tier: a free key gets a quota of 0,
-    // so every request fails with 429 no matter how long you wait.
-    const noFreeQuota = /limit:\s*0\b|free[_ ]?tier|billing/i.test(detail);
-    if (noFreeQuota) {
-      return new PreviewError(
-        "This API key has no quota for Gemini image generation. Google does not offer image " +
-        "generation on the free tier, so billing must be turned on for the key's project in " +
-        "Google AI Studio (about $0.03–$0.07 per image)."
-      );
-    }
-    return new PreviewError(
-      "Gemini says this key is over its usage limit. If this keeps happening, the key's project " +
-      "probably needs billing turned on in Google AI Studio (image generation is not free)." +
-      (detail ? ` Google's message: "${detail.slice(0, 200)}"` : "")
-    );
-  }
-  // Other errors (e.g. endpoint not available) may work with the older endpoint.
-  return new PreviewError(
-    `Gemini returned an error (${response.status})${detail ? ": " + detail : "."}`,
-    { canFallback: response.status === 400 || response.status === 404 || response.status >= 500 }
-  );
-}
-
-// Look through any Gemini response shape for the first returned image.
-// Handles the Interactions API (type: "image", data) and generateContent
-// (inlineData / inline_data { mimeType, data }).
-function findGeminiImage(node) {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findGeminiImage(child);
-      if (found) return found;
-    }
-    return null;
+// ---------- Gemini try-on through our own server (no key in the website) ----------
+// One request dresses the whole outfit, shoes included.
+async function generateWithGeminiProxy(userPhoto, outfit, onProgress) {
+  onProgress("Creating your preview with Gemini… this takes about 20–40 seconds.");
+  const garments = [];
+  for (const item of outfit) {
+    const image = splitDataUrl(await resizeToJpeg(item.image, GARMENT_MAX_PX));
+    garments.push({ category: item.category, name: item.name, color: item.color, ...image });
   }
 
-  const inline = node.inlineData || node.inline_data;
-  if (inline && inline.data) {
-    return { mimeType: inline.mimeType || inline.mime_type || "image/png", data: inline.data };
-  }
-  if (node.type === "image" && typeof node.data === "string" && node.data.length > 100) {
-    return { mimeType: node.mime_type || node.mimeType || "image/png", data: node.data };
-  }
-
-  for (const value of Object.values(node)) {
-    if (value && typeof value === "object") {
-      const found = findGeminiImage(value);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-// If no image came back, explain why (usually a safety block or a text-only reply).
-function explainMissingImage(body) {
-  const block = body && body.promptFeedback && body.promptFeedback.blockReason;
-  const finish = body && body.candidates && body.candidates[0] && body.candidates[0].finishReason;
-  if (block || /SAFETY|PROHIBITED|BLOCK/i.test(finish || "")) {
-    return "Gemini declined to create this image. Try a different photo (clear, full-body, fully clothed).";
-  }
-  return "Gemini replied without an image. Please try again, or try a different photo.";
-}
-
-async function fetchWithTimeout(url, options) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), TRYON_PROXY_TIMEOUT_MS);
+  let response;
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    response = await fetch(TRYON_PROXY_URL.replace(/\/+$/, "") + "/tryon", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ person: splitDataUrl(userPhoto.image), garments }),
+      signal: controller.signal
+    });
   } catch (err) {
-    if (err.name === "AbortError") {
-      throw new PreviewError("Gemini took too long to respond. Please try again.");
-    }
-    // Network/CORS problem: the older endpoint may still work.
-    throw new PreviewError("Could not reach Google Gemini. Check your internet connection.", { canFallback: true });
+    const error = new PreviewError(err.name === "AbortError"
+      ? "The try-on service took too long." : "Could not reach the try-on service.");
+    error.reason = "offline";
+    throw error;
   } finally {
     clearTimeout(timer);
   }
-}
 
-// Newer Gemini "Interactions" endpoint (current Google docs).
-async function requestViaInteractions(apiKey, prompt, images) {
-  const response = await fetchWithTimeout(`${GEMINI_API_BASE}/interactions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
-      "Api-Revision": "2026-05-20"
-    },
-    body: JSON.stringify({
-      model: GEMINI_IMAGE_MODEL,
-      input: [
-        { type: "text", text: prompt },
-        ...images.map(img => ({ type: "image", mime_type: img.mimeType, data: img.data }))
-      ],
-      response_format: { type: "image", aspect_ratio: "3:4" }
-    })
-  });
-  if (!response.ok) throw await toPreviewError(response);
-  return response.json();
-}
-
-// Older, widely supported "generateContent" endpoint (used as a fallback).
-async function requestViaGenerateContent(apiKey, prompt, images) {
-  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
-      contents: [{
-        role: "user",
-        parts: [
-          { text: prompt },
-          ...images.map(img => ({ inline_data: { mime_type: img.mimeType, data: img.data } }))
-        ]
-      }],
-      generationConfig: {
-        responseModalities: ["TEXT", "IMAGE"],
-        imageConfig: { aspectRatio: "3:4" }
-      }
-    })
-  });
-  if (!response.ok) throw await toPreviewError(response);
-  return response.json();
-}
-
-async function generateTryOnImage(apiKey, userPhoto, outfit) {
-  // Person first, then each clothing item (all resized to keep the upload small).
-  const images = [splitDataUrl(userPhoto.image)];
-  for (const item of outfit) {
-    images.push(splitDataUrl(await resizeToJpeg(item.image, GARMENT_MAX_PX)));
+  let body = null;
+  try { body = await response.json(); } catch { /* not JSON */ }
+  if (response.ok && body && body.image && body.image.data) {
+    return { image: `data:${body.image.mimeType || "image/png"};base64,${body.image.data}`, note: "" };
   }
-  const prompt = buildTryOnPrompt(outfit);
-
-  let body;
-  try {
-    body = await requestViaInteractions(apiKey, prompt, images);
-  } catch (err) {
-    if (!(err instanceof PreviewError) || !err.canFallback) throw err;
-    body = await requestViaGenerateContent(apiKey, prompt, images);
-  }
-
-  const image = findGeminiImage(body);
-  if (!image) throw new PreviewError(explainMissingImage(body));
-  return { image: `data:${image.mimeType};base64,${image.data}`, note: "" };
-}
-
-// ---------- Hugging Face (free) ----------
-function getPreviewProvider() {
-  return readStorage(PREVIEW_PROVIDER_KEY) === "gemini" ? "gemini" : "huggingface";
-}
-
-function getHfToken() {
-  return (readStorage(HF_TOKEN_KEY) || "").trim();
-}
-
-function dataUrlToBlob(dataUrl) {
-  const parts = splitDataUrl(dataUrl);
-  const bytes = atob(parts.data);
-  const array = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) array[i] = bytes.charCodeAt(i);
-  return new Blob([array], { type: parts.mimeType });
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new PreviewError("Could not read the generated image."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-let gradioClientPromise = null;
-function loadGradioClient() {
-  if (!gradioClientPromise) {
-    gradioClientPromise = import(GRADIO_CLIENT_URL).catch(() => {
-      gradioClientPromise = null; // Allow another try later.
-      throw new PreviewError("Could not load the Hugging Face connector. Check your internet connection.");
-    });
-  }
-  return gradioClientPromise;
-}
-
-// Each demo has its own inputs; this builds the request for one clothing piece.
-function buildHfRequest(kind, person, garment, item, handle_file) {
-  if (kind === "idm") {
-    return {
-      endpoint: "/tryon",
-      payload: {
-        dict: { background: handle_file(person), layers: [], composite: null },
-        garm_img: handle_file(garment),
-        garment_des: `${item.color} ${item.name}`,
-        is_checked: true,       // Find the clothing area automatically.
-        is_checked_crop: false,
-        denoise_steps: 30,
-        seed: 42
-      },
-      pick: data => data[0]
-    };
-  }
-  // Image editors take a gallery: [{ image, caption }, ...] (person first, then shoes).
-  const gallery = [
-    { image: handle_file(person), caption: null },
-    { image: handle_file(garment), caption: null }
-  ];
-  if (kind === "flux2-edit") {
-    return {
-      endpoint: "/infer",
-      payload: {
-        prompt: SHOE_EDIT_PROMPT,
-        input_images: gallery,
-        seed: 0,
-        randomize_seed: true,
-        width: 768,
-        height: 1024,
-        num_inference_steps: 20,  // Fewer steps = less free GPU time used.
-        guidance_scale: 4,
-        prompt_upsampling: false
-      },
-      pick: data => data[0]
-    };
-  }
-  if (kind === "qwen-edit") {
-    return {
-      endpoint: "/infer",
-      payload: {
-        images: gallery,
-        prompt: SHOE_EDIT_PROMPT,
-        seed: 0,
-        randomize_seed: true,
-        true_guidance_scale: 4,
-        num_inference_steps: 20,
-        height: 1024,
-        width: 768,
-        rewrite_prompt: false
-      },
-      pick: data => data[0][0].image
-    };
-  }
-
-  const common = { vton_img: handle_file(person), garm_img: handle_file(garment), n_samples: 1, n_steps: 20, image_scale: 2, seed: -1 };
-  if (kind === "ootd-upper") {
-    return { endpoint: "/process_dc", payload: { ...common, category: "Upper-body" }, pick: data => data[0][0].image };
-  }
-  return { endpoint: "/process_dc", payload: { ...common, category: "Lower-body" }, pick: data => data[0][0].image };
-}
-
-function isQuotaMessage(text) {
-  return /quota|exceeded|rate limit|too many requests/i.test(text);
-}
-
-const HF_QUOTA_MESSAGE =
-  "You've used the free Hugging Face try-on time for now. Try again later, add a free " +
-  "Hugging Face token in AI settings for more, or switch to Google Gemini.";
-const HF_OFFLINE_MESSAGE =
-  "The free try-on service is busy or offline right now. Please try again in a few minutes.";
-
-// Status updates can carry a warning such as "ZeroGPU quota exceeded" without
-// being marked as an error, so read both the title and the message.
-function getStatusText(status) {
-  const message = typeof status.message === "string" ? status.message : JSON.stringify(status.message || "");
-  return [status.title, message].filter(Boolean).join(": ");
-}
-
-// Put one clothing piece on the person, trying each service until one works.
-// Each demo has its own free-time limit, so a limit on one still tries the next.
-async function runHfStep(gradio, services, person, garment, item, onStatus) {
-  const token = getHfToken();
-  let hitQuota = false;
-  let quotaResetMinutes = 0;
-
-  for (const service of services) {
-    try {
-      // Ask for "status" updates too (the client only sends "data" by default);
-      // they carry the queue position and warnings like "quota exceeded".
-      const options = { events: ["data", "status"] };
-      if (token) options.token = token;
-      const client = await gradio.Client.connect(service.space, options);
-      const request = buildHfRequest(service.kind, person, garment, item, gradio.handle_file);
-      const job = client.submit(request.endpoint, request.payload);
-      const timer = setTimeout(() => job.cancel && job.cancel(), HF_STEP_TIMEOUT_MS);
-
-      let data = null;
-      let lastStatusText = "";
-      try {
-        for await (const message of job) {
-          if (message.type === "status") {
-            const text = getStatusText(message);
-            if (text) lastStatusText = text;
-            if (message.stage === "error" || isQuotaMessage(text)) {
-              throw new Error(text || "The try-on service reported an error.");
-            }
-            onStatus(message);
-          } else if (message.type === "data") {
-            data = message.data;
-            break;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!data) throw new Error(lastStatusText || "No result (timed out or cancelled).");
-
-      const file = request.pick(data);
-      const response = await fetch(file && (file.url || file.path));
-      if (!response.ok) throw new Error("Could not download the result.");
-      return await response.blob();
-    } catch (err) {
-      const text = String((err && (err.message || err.title)) || err);
-      if (isQuotaMessage(text)) {
-        hitQuota = true;
-        // e.g. "Try again in 23:49:18" -> remember the longest wait we were told.
-        const wait = /try again in (\d+):(\d+):(\d+)/i.exec(text);
-        if (wait) {
-          const minutes = Number(wait[1]) * 60 + Number(wait[2]);
-          quotaResetMinutes = Math.max(quotaResetMinutes, minutes);
-        }
-      }
-      console.warn(`Try-on with ${service.space} failed, trying the next service:`, text);
-    }
-  }
-  if (!hitQuota) throw new PreviewError(HF_OFFLINE_MESSAGE);
-  const error = new PreviewError(HF_QUOTA_MESSAGE + describeReset(quotaResetMinutes));
-  error.isQuota = true;
+  const error = new PreviewError((body && body.message) || `The try-on service returned an error (${response.status}).`);
+  error.reason = (body && body.error) || "offline";
   throw error;
 }
 
-// Turn minutes into "It resets in about 3 hours." (blank if unknown).
-function describeReset(minutes) {
-  if (!minutes) return "";
-  if (minutes < 60) return ` It resets in about ${minutes} minute${minutes === 1 ? "" : "s"}.`;
-  const hours = Math.round(minutes / 60);
-  return ` It resets in about ${hours} hour${hours === 1 ? "" : "s"}.`;
-}
-
-async function generateWithHuggingFace(userPhoto, outfit, onProgress) {
-  const steps = HF_DRESSING_ORDER
-    .map(category => outfit.find(item => item.category === category))
-    .filter(Boolean);
-  const notShown = outfit.filter(item => !HF_DRESSING_ORDER.includes(item.category));
-
-  if (steps.length === 0) {
-    throw new PreviewError("This outfit has no clothing pieces to put on yet.");
-  }
-
-  onProgress("Connecting to the free try-on service…");
-  const gradio = await loadGradioClient();
-
-  let person = dataUrlToBlob(userPhoto.image);
-  const added = [];
-  const failed = [];     // Pieces that couldn't be put on.
-  let lastError = null;
-
-  for (let i = 0; i < steps.length; i++) {
-    const item = steps[i];
-    const label = `Step ${i + 1} of ${steps.length}: putting on ${item.name}`;
-    onProgress(label + "…");
-
-    const garment = dataUrlToBlob(await resizeToJpeg(item.image, GARMENT_MAX_PX));
-    const services = item.category === "bottom" ? HF_LOWER_BODY_SERVICES
-      : item.category === "shoes" ? HF_SHOE_SERVICES
-      : HF_UPPER_BODY_SERVICES;
-
-    try {
-      person = await runHfStep(gradio, services, person, garment, item, status => {
-        const waiting = status.queue && typeof status.position === "number" && status.position > 0;
-        onProgress(label + (waiting ? ` (waiting in line, #${status.position + 1})…` : "…"));
-      });
-      added.push(item);
-    } catch (err) {
-      // Keep going: a partial preview is more useful than none.
-      failed.push(item);
-      lastError = err;
-    }
-  }
-
-  if (added.length === 0) throw lastError || new PreviewError(HF_OFFLINE_MESSAGE);
-
-  const names = items => items.map(item => item.name).join(", ");
-  const notes = [];
-  if (failed.length) {
-    const reason = lastError && lastError.isQuota
-      ? "the free try-on time ran out" : "the free service didn't respond";
-    notes.push(`${names(failed)} couldn't be added because ${reason}. Try again later to see the full outfit.`);
-  }
-  if (notShown.length) {
-    notes.push(`${names(notShown)} ${notShown.length === 1 ? "isn't" : "aren't"} shown in the free preview.`);
-  }
-  return { image: await blobToDataUrl(person), note: notes.join(" ") };
+// The AI try-on always uses our Gemini service.
+async function generateTryOn(userPhoto, outfit, onProgress) {
+  if (!TRYON_PROXY_URL) throw new PreviewError("The try-on service isn't set up yet.");
+  return generateWithGeminiProxy(userPhoto, outfit, onProgress);
 }
 
 // ---------- Rendering the preview screen ----------
@@ -2154,29 +2181,24 @@ const previewEls = {
   photoImg: document.getElementById("preview-photo-img"),
   photoInput: document.getElementById("preview-photo-input"),
   photoRemove: document.getElementById("preview-photo-remove"),
+  viewBoardBtn: document.getElementById("preview-view-board"),
+  viewPhotoBtn: document.getElementById("preview-view-photo"),
+  boardView: document.getElementById("preview-board-view"),
+  flatlay: document.getElementById("preview-flatlay"),
+  photoView: document.getElementById("preview-photo-view"),
   stage: document.getElementById("preview-result-stage"),
   placeholder: document.getElementById("preview-result-placeholder"),
   icon: document.getElementById("preview-result-icon"),
   message: document.getElementById("preview-result-message"),
+  seeBoard: document.getElementById("preview-see-board"),
   resultImg: document.getElementById("preview-result-img"),
   caption: document.getElementById("preview-result-caption"),
   download: document.getElementById("preview-download"),
   generate: document.getElementById("preview-generate-btn"),
-  settings: document.getElementById("preview-settings"),
-  providerInputs: document.querySelectorAll('input[name="preview-provider"]'),
-  hfSettings: document.getElementById("preview-hf-settings"),
-  hfForm: document.getElementById("preview-hf-form"),
-  hfInput: document.getElementById("preview-hf-input"),
-  hfRemove: document.getElementById("preview-hf-remove"),
-  hfStatus: document.getElementById("preview-hf-status"),
-  geminiSettings: document.getElementById("preview-gemini-settings"),
-  keyForm: document.getElementById("preview-key-form"),
-  keyInput: document.getElementById("preview-key-input"),
-  keyRemove: document.getElementById("preview-key-remove"),
-  keyStatus: document.getElementById("preview-key-status")
+  save: document.getElementById("preview-save-btn")
 };
 
-// Load a previously generated preview so it survives a page refresh.
+// Load a previously generated try-on so it survives a page refresh.
 (function restorePreviewResult() {
   const raw = readStorage(PREVIEW_RESULT_KEY);
   if (!raw) return;
@@ -2185,7 +2207,6 @@ const previewEls = {
 
 function renderPreviewOutfitList(outfit) {
   previewEls.list.replaceChildren();
-
   if (outfit.length === 0) {
     const empty = document.createElement("li");
     empty.className = "preview-outfit-empty";
@@ -2193,50 +2214,74 @@ function renderPreviewOutfitList(outfit) {
     previewEls.list.appendChild(empty);
     return;
   }
-
   outfit.forEach(item => {
     const row = document.createElement("li");
     row.className = `preview-outfit-row row-${item.category}`;
-
     const thumb = document.createElement("span");
     thumb.className = "preview-outfit-thumb";
     const img = document.createElement("img");
     img.src = item.image;
     img.alt = "";
     thumb.appendChild(img);
-
     const name = document.createElement("span");
     name.className = "preview-outfit-name";
     name.textContent = item.name;
-
     const srLabel = document.createElement("span");
     srLabel.className = "visually-hidden";
     srLabel.textContent = getCategoryLabel(item.category) + ": ";
     name.prepend(srLabel);
-
     row.append(thumb, name);
     previewEls.list.appendChild(row);
   });
 }
 
-function setPreviewPlaceholder(iconClass, text) {
+// "Full outfit": every piece arranged like an outfit laid out on a bed,
+// jacket and top side by side, bottom below, shoes at the bottom.
+function renderOutfitFlatlay(container, outfit) {
+  container.replaceChildren();
+  if (outfit.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "flatlay-empty";
+    empty.textContent = "No outfit yet. Add clothes in My Closet first.";
+    container.appendChild(empty);
+    return;
+  }
+  ["outerwear", "top", "bottom", "shoes"].forEach(category => {
+    const item = outfit.find(piece => piece.category === category);
+    const label = getCategoryLabel(category);
+    const tile = document.createElement("figure");
+    tile.className = `flatlay-tile flatlay-${category}` + (item ? "" : " is-empty");
+    if (item) {
+      const img = document.createElement("img");
+      img.src = item.image;
+      img.alt = `${label}: ${item.name}`;
+      tile.appendChild(img);
+    }
+    const caption = document.createElement("figcaption");
+    caption.textContent = item ? item.name : `No ${label.toLowerCase()} today`;
+    tile.appendChild(caption);
+    container.appendChild(tile);
+  });
+}
+
+function setPreviewPlaceholder(iconClass, text, offerBoard = false) {
   previewEls.placeholder.classList.remove("hidden");
   previewEls.resultImg.classList.add("hidden");
   previewEls.caption.classList.add("hidden");
   previewEls.download.classList.add("hidden");
   previewEls.icon.className = iconClass;
   previewEls.message.textContent = text;
+  previewEls.seeBoard.classList.toggle("hidden", !offerBoard);
 }
 
 function renderVirtualPreview() {
   const outfit = getPreviewOutfit();
   const outfitKey = getOutfitKey(outfit);
   const photo = getUserPhoto();
-  const hasKey = !!getGeminiKey();
-  const provider = getPreviewProvider();
   const generating = previewState.status === "generating";
 
   renderPreviewOutfitList(outfit);
+  renderOutfitFlatlay(previewEls.flatlay, outfit);
 
   // Photo slot: upload box vs. saved photo.
   previewEls.uploadLabel.classList.toggle("hidden", !!photo);
@@ -2245,67 +2290,71 @@ function renderVirtualPreview() {
   previewEls.photoInput.disabled = generating;
   previewEls.photoRemove.disabled = generating;
 
-  // Generated preview area (matches the Figma states).
+  // Which view is showing.
+  const showPhoto = previewState.view === "photo";
+  previewEls.viewBoardBtn.classList.toggle("active", !showPhoto);
+  previewEls.viewBoardBtn.setAttribute("aria-pressed", String(!showPhoto));
+  previewEls.viewPhotoBtn.classList.toggle("active", showPhoto);
+  previewEls.viewPhotoBtn.setAttribute("aria-pressed", String(showPhoto));
+  previewEls.boardView.classList.toggle("hidden", showPhoto);
+  previewEls.photoView.classList.toggle("hidden", !showPhoto);
+
+  // "On my photo" states.
   const result = previewState.result;
   const resultIsCurrent = result && photo &&
     result.outfitKey === outfitKey && result.photoStamp === photo.stamp;
   previewEls.stage.setAttribute("aria-busy", String(generating));
 
   if (generating) {
-    setPreviewPlaceholder("preview-spinner", previewState.progress || "Preview generating…");
+    setPreviewPlaceholder("preview-spinner", previewState.progress || "Preview generating…", true);
   } else if (previewState.status === "error") {
-    setPreviewPlaceholder("preview-person-icon is-error", previewState.error);
+    setPreviewPlaceholder("preview-person-icon is-error",
+      previewState.error + " Your full outfit is still shown in \"Full outfit\".", true);
   } else if (resultIsCurrent) {
     previewEls.placeholder.classList.add("hidden");
     previewEls.resultImg.classList.remove("hidden");
     previewEls.resultImg.src = result.image;
-    previewEls.resultImg.alt = "AI-generated preview of you wearing " +
-      outfit.map(item => item.name).join(", ");
+    previewEls.resultImg.alt = "AI-generated preview of you wearing " + outfit.map(item => item.name).join(", ");
     previewEls.caption.classList.remove("hidden");
     previewEls.caption.textContent = "Preview ready · AI-generated, so details may differ from your real clothes." +
       (result.note ? " " + result.note : "");
     previewEls.download.classList.remove("hidden");
     previewEls.download.href = result.image;
   } else if (!photo) {
-    setPreviewPlaceholder("preview-person-icon", "Upload a full-body photo to preview this outfit.");
+    setPreviewPlaceholder("preview-person-icon",
+      "Upload a full-body photo to try this outfit on yourself. The \"Full outfit\" view works without a photo.", true);
   } else if (result && result.photoStamp === photo.stamp) {
-    setPreviewPlaceholder("preview-person-icon", "Your outfit changed since the last preview. Generate again to see it.");
+    setPreviewPlaceholder("preview-person-icon", "Your outfit changed since the last try-on. Click Try It On My Photo to update it.");
   } else {
-    setPreviewPlaceholder("preview-person-icon", "No preview generated yet.");
+    setPreviewPlaceholder("preview-person-icon",
+      "Click Try It On My Photo to see this outfit on you (AI, about 20–40 seconds).");
   }
 
-  // Generate button.
+  // Buttons.
   const canGenerate = !!photo && outfit.length > 0 && !generating;
   previewEls.generate.disabled = !canGenerate;
-  previewEls.generate.textContent = generating
-    ? "Generating…"
-    : resultIsCurrent ? "Generate Again →" : "Generate Preview →";
+  previewEls.generate.textContent = generating ? "Generating…"
+    : resultIsCurrent ? "Try It On Again →" : "Try It On My Photo →";
   previewEls.generate.title = !photo ? "Upload your photo first"
     : outfit.length === 0 ? "Add clothes in My Closet first" : "";
-
-  // AI settings: show only the chosen service's options.
-  previewEls.providerInputs.forEach(input => {
-    input.checked = input.value === provider;
-    input.disabled = generating;
-  });
-  previewEls.hfSettings.classList.toggle("hidden", provider !== "huggingface");
-  previewEls.geminiSettings.classList.toggle("hidden", provider !== "gemini");
-
-  // Gemini can't work without a key, so open the panel when one is missing.
-  if (provider === "gemini" && !hasKey) previewEls.settings.open = true;
-  previewEls.keyStatus.textContent = hasKey
-    ? "A key is saved in this browser."
-    : "No key saved yet. You need one to use Gemini.";
-  previewEls.hfStatus.textContent = getHfToken()
-    ? "A token is saved in this browser."
-    : "No token saved (that's fine: the free preview still works).";
+  previewEls.save.disabled = outfit.length === 0;
 }
 
-// ---------- Events ----------
+function setPreviewView(view) {
+  previewState.view = view;
+  renderVirtualPreview();
+}
+
+// ---------- Preview events ----------
+previewEls.viewBoardBtn.addEventListener("click", () => setPreviewView("board"));
+previewEls.viewPhotoBtn.addEventListener("click", () => setPreviewView("photo"));
+previewEls.seeBoard.addEventListener("click", () => setPreviewView("board"));
+
 previewEls.photoInput.addEventListener("change", async () => {
   const file = previewEls.photoInput.files && previewEls.photoInput.files[0];
   previewEls.photoInput.value = ""; // Allow picking the same file again later.
   if (!file) return;
+  previewState.view = "photo";
 
   if (!file.type.startsWith("image/")) {
     previewState.status = "error";
@@ -2313,14 +2362,13 @@ previewEls.photoInput.addEventListener("change", async () => {
     renderVirtualPreview();
     return;
   }
-
   try {
     const image = await resizeToJpeg(await readFileAsDataUrl(file), USER_PHOTO_MAX_PX);
     const photo = { image, stamp: String(Date.now()) };
     previewState.status = "idle";
     if (!writeStorage(USER_PHOTO_KEY, JSON.stringify(photo))) {
       previewState.status = "error";
-      previewState.error = "Your browser storage is full, so the photo could not be saved. Remove some closet items and try again.";
+      previewState.error = "Your browser storage is full, so the photo could not be saved.";
     }
   } catch (err) {
     previewState.status = "error";
@@ -2343,17 +2391,7 @@ previewEls.generate.addEventListener("click", async () => {
   const photo = getUserPhoto();
   if (!photo || outfit.length === 0 || previewState.status === "generating") return;
 
-  const provider = getPreviewProvider();
-  const apiKey = getGeminiKey();
-  if (provider === "gemini" && !apiKey) {
-    previewState.status = "error";
-    previewState.error = "Add your Gemini API key in AI settings, or switch to the free Hugging Face option.";
-    renderVirtualPreview();
-    previewEls.settings.open = true;
-    previewEls.keyInput.focus();
-    return;
-  }
-
+  previewState.view = "photo";
   previewState.status = "generating";
   previewState.progress = "";
   renderVirtualPreview();
@@ -2365,11 +2403,7 @@ previewEls.generate.addEventListener("click", async () => {
   };
 
   try {
-    const generated = provider === "gemini"
-      ? (onProgress("Asking Google Gemini… this can take up to a minute."),
-        await generateTryOnImage(apiKey, photo, outfit))
-      : await generateWithHuggingFace(photo, outfit, onProgress);
-
+    const generated = await generateTryOn(photo, outfit, onProgress);
     // Store a smaller copy so it fits in browser storage.
     const image = await resizeToJpeg(generated.image, RESULT_MAX_PX, 0.9).catch(() => generated.image);
     previewState.result = {
@@ -2384,59 +2418,220 @@ previewEls.generate.addEventListener("click", async () => {
   } catch (err) {
     previewState.status = "error";
     previewState.error = err instanceof PreviewError
-      ? err.message
-      : "Something went wrong while creating the preview. Please try again.";
+      ? err.message + " Please try again later."
+      : "Something went wrong while creating the try-on.";
   }
   renderVirtualPreview();
 });
 
-previewEls.keyForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const key = previewEls.keyInput.value.trim();
-  if (!key) {
-    previewEls.keyStatus.textContent = "Paste a key first.";
-    return;
-  }
-  writeStorage(GEMINI_KEY_STORAGE, key);
-  previewEls.keyInput.value = "";
-  if (previewState.status === "error") previewState.status = "idle";
-  renderVirtualPreview();
-  previewEls.keyStatus.textContent = "Key saved in this browser.";
-});
-
-previewEls.keyRemove.addEventListener("click", () => {
-  removeStorage(GEMINI_KEY_STORAGE);
-  renderVirtualPreview();
-});
-
-previewEls.providerInputs.forEach(input => {
-  input.addEventListener("change", () => {
-    writeStorage(PREVIEW_PROVIDER_KEY, input.value);
-    if (previewState.status === "error") previewState.status = "idle";
-    renderVirtualPreview();
-  });
-});
-
-previewEls.hfForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const token = previewEls.hfInput.value.trim();
-  if (!/^hf_\w+$/.test(token)) {
-    previewEls.hfStatus.textContent = 'That doesn\'t look like a Hugging Face token (it should start with "hf_").';
-    return;
-  }
-  writeStorage(HF_TOKEN_KEY, token);
-  previewEls.hfInput.value = "";
-  renderVirtualPreview();
-  previewEls.hfStatus.textContent = "Token saved in this browser.";
-});
-
-previewEls.hfRemove.addEventListener("click", () => {
-  removeStorage(HF_TOKEN_KEY);
-  renderVirtualPreview();
-});
-
+previewEls.save.addEventListener("click", saveCurrentOutfit);
 document.getElementById("preview-back-home").addEventListener("click", () => goToRoute("home"));
 document.getElementById("open-preview-btn").addEventListener("click", () => goToRoute("preview"));
+
+// ---------- Saved outfits ----------
+// Each saved outfit stores the IDs of its pieces (all four categories), plus the
+// weather it was saved for:
+// { id, savedAt, items: { top, bottom, outerwear, shoes }, weather: { band, temp, condition, location } | null }
+function getSavedOutfits() {
+  try {
+    const list = JSON.parse(readStorage(SAVED_OUTFITS_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function setSavedOutfits(list) {
+  return writeStorage(SAVED_OUTFITS_KEY, JSON.stringify(list));
+}
+
+function outfitSignature(items) {
+  return OUTFIT_CATEGORIES.map(category => items[category] || "-").join("|");
+}
+
+const saveToast = document.getElementById("save-toast");
+const saveToastMessage = document.getElementById("save-toast-message");
+const saveToastBtn = document.getElementById("save-toast-btn");
+let saveToastTimer = null;
+
+function showSaveToast(message, offerLink) {
+  saveToastMessage.textContent = message;
+  saveToastBtn.classList.toggle("hidden", !offerLink);
+  saveToast.classList.add("show");
+  clearTimeout(saveToastTimer);
+  saveToastTimer = setTimeout(() => saveToast.classList.remove("show"), 6000);
+}
+
+saveToastBtn.addEventListener("click", () => {
+  saveToast.classList.remove("show");
+  goToRoute("saved");
+});
+
+function saveCurrentOutfit() {
+  const items = {};
+  OUTFIT_CATEGORIES.forEach(category => { items[category] = selectedOutfitIds[category] || null; });
+  const count = Object.values(items).filter(Boolean).length;
+  if (count === 0) {
+    showSaveToast("There's no outfit to save yet. Add clothes in My Closet first.", false);
+    return;
+  }
+
+  const list = getSavedOutfits();
+  if (list.some(outfit => outfitSignature(outfit.items) === outfitSignature(items))) {
+    showSaveToast("This outfit is already in your Saved Outfits.", true);
+    return;
+  }
+
+  // The weather the outfit was chosen for (the picked time, if it was for later).
+  const w = getOutfitWeather();
+  list.unshift({
+    id: "outfit_" + Date.now(),
+    savedAt: Date.now(),
+    items,
+    weather: w ? {
+      band: getCurrentWeatherBand(), temp: w.nowTemp, condition: w.condition,
+      location: w.location, forLabel: w.label || null
+    } : null
+  });
+  if (!setSavedOutfits(list)) {
+    showSaveToast("Couldn't save: your browser storage is full.", false);
+    return;
+  }
+  showSaveToast(`Outfit saved with all ${count} piece${count === 1 ? "" : "s"}.`, true);
+  if (screenSaved.classList.contains("active")) renderSavedOutfits();
+}
+
+function describeSavedOutfit(outfit) {
+  const band = outfit.weather && outfit.weather.band;
+  const title = band ? `${band[0].toUpperCase() + band.slice(1)}-weather outfit` : "Saved outfit";
+  const date = new Date(outfit.savedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const weather = outfit.weather && outfit.weather.temp != null
+    ? ` · ${outfit.weather.temp}°F, ${outfit.weather.condition}` : "";
+  const when = outfit.weather && outfit.weather.forLabel ? ` · for ${outfit.weather.forLabel}` : "";
+  return { title, meta: `Saved ${date}${when}${weather}` };
+}
+
+// Put a saved outfit back on Home (as hand-picked pieces), then open a screen.
+function wearSavedOutfit(outfit, destination) {
+  const closet = getStoredCloset();
+  OUTFIT_CATEGORIES.forEach(category => {
+    const id = outfit.items[category];
+    if (id && closet.some(item => item.id === id)) manualOutfitIds[category] = id;
+    else delete manualOutfitIds[category];
+  });
+  renderOutfitPreview(); // Updates selectedOutfitIds (weather rules still apply).
+
+  const missing = OUTFIT_CATEGORIES.filter(category =>
+    outfit.items[category] && !closet.some(item => item.id === outfit.items[category]));
+  const notToday = OUTFIT_CATEGORIES.filter(category =>
+    outfit.items[category] && !missing.includes(category) &&
+    selectedOutfitIds[category] !== outfit.items[category]);
+
+  goToRoute(destination);
+
+  const notes = [];
+  if (notToday.length) {
+    notes.push(`${notToday.map(c => getCategoryLabel(c).toLowerCase()).join(", ")} doesn't fit today's weather, so today's suggestion is used instead.`);
+  }
+  if (missing.length) {
+    notes.push(`${missing.map(c => getCategoryLabel(c).toLowerCase()).join(", ")} was removed from your closet.`);
+  }
+  showSaveToast("Saved outfit loaded." + (notes.length ? " " + notes.join(" ") : ""), false);
+}
+
+function renderSavedOutfits() {
+  const list = getSavedOutfits();
+  const closet = getStoredCloset();
+  const container = document.getElementById("saved-list");
+  document.getElementById("saved-count-badge").textContent =
+    `${list.length} ${list.length === 1 ? "outfit" : "outfits"}`;
+  container.replaceChildren();
+
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "closet-empty-state";
+    const title = document.createElement("p");
+    title.className = "empty-title";
+    title.textContent = "No saved outfits yet";
+    const hint = document.createElement("p");
+    hint.className = "empty-hint";
+    hint.textContent = "Open View / Edit Outfit or Preview Outfit on Me and click ★ Save Outfit.";
+    empty.append(title, hint);
+    container.appendChild(empty);
+    return;
+  }
+
+  list.forEach(outfit => {
+    const { title, meta } = describeSavedOutfit(outfit);
+    const card = document.createElement("article");
+    card.className = "saved-outfit-card";
+
+    const head = document.createElement("div");
+    head.className = "saved-outfit-head";
+    const h3 = document.createElement("h3");
+    h3.textContent = title;
+    const p = document.createElement("p");
+    p.textContent = meta;
+    head.append(h3, p);
+
+    const pieces = document.createElement("div");
+    pieces.className = "saved-outfit-pieces";
+    OUTFIT_CATEGORIES.forEach(category => {
+      const id = outfit.items[category];
+      const item = id ? closet.find(piece => piece.id === id) : null;
+      const piece = document.createElement("div");
+      piece.className = `saved-piece cat-${category}` + (item ? "" : " is-empty");
+      if (item) {
+        const img = document.createElement("img");
+        img.src = item.image;
+        img.alt = "";
+        piece.appendChild(img);
+      }
+      const name = document.createElement("span");
+      name.textContent = item ? item.name
+        : id ? "Removed from closet" : `No ${getCategoryLabel(category).toLowerCase()}`;
+      piece.appendChild(name);
+      pieces.appendChild(piece);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "saved-outfit-actions";
+    const wear = document.createElement("button");
+    wear.type = "button";
+    wear.className = "primary-pill-btn";
+    wear.textContent = "Wear this outfit";
+    wear.addEventListener("click", () => wearSavedOutfit(outfit, "outfit"));
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "cancel-btn";
+    preview.textContent = "Preview";
+    preview.addEventListener("click", () => wearSavedOutfit(outfit, "preview"));
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "cancel-btn saved-delete-btn";
+    del.textContent = "Delete";
+    // Two clicks to delete, so a slip of the finger doesn't lose an outfit.
+    let confirmTimer = null;
+    del.addEventListener("click", () => {
+      if (del.dataset.confirm !== "yes") {
+        del.dataset.confirm = "yes";
+        del.textContent = "Click again to delete";
+        confirmTimer = setTimeout(() => { del.dataset.confirm = ""; del.textContent = "Delete"; }, 3000);
+        return;
+      }
+      clearTimeout(confirmTimer);
+      setSavedOutfits(getSavedOutfits().filter(saved => saved.id !== outfit.id));
+      renderSavedOutfits();
+      document.getElementById("saved-status").textContent = "Outfit deleted.";
+    });
+    actions.append(wear, preview, del);
+
+    card.append(head, pieces, actions);
+    container.appendChild(card);
+  });
+}
+
+document.getElementById("outfit-save-btn").addEventListener("click", saveCurrentOutfit);
 
 // HEND: Show the screen named in the address (e.g. #closet/shoes) on page load.
 applyRoute();
