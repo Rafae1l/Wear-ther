@@ -141,18 +141,18 @@
           </div>
           <p class="helper-text preview-privacy">
             Optional: add a clear, full-body photo (standing, facing the camera, feet visible) to
-            try the outfit on yourself. It is saved only in this browser and sent to the free
-            try-on service only when you click Try It On My Photo.
+            try the outfit on yourself. It is saved only in this browser and sent to Google
+            Gemini (through Wear-ther's try-on service) only when you click Try It On My Photo.
           </p>
         </div>
 
-        <!-- Right: the preview. "Full outfit" always works; "On my photo" is an AI beta. -->
+        <!-- Right: the preview. "Full outfit" always works; "On my photo" uses Gemini. -->
         <div class="preview-panel preview-result-panel">
           <div class="preview-result-head">
             <h3>Generated Preview</h3>
             <div class="compare-toggle" role="group" aria-label="Preview type">
               <button id="preview-view-board" class="compare-btn active" type="button" aria-pressed="true">Full outfit</button>
-              <button id="preview-view-photo" class="compare-btn" type="button" aria-pressed="false">On my photo · beta</button>
+              <button id="preview-view-photo" class="compare-btn" type="button" aria-pressed="false">On my photo</button>
             </div>
           </div>
 

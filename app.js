@@ -1700,8 +1700,9 @@ closetBtn.addEventListener("click", () => {
 // The preview screen has two views:
 //   "Full outfit"        - all four pieces arranged together. Instant, no AI and no
 //                          key, so it always works and can never time out.
-//   "On my photo (beta)" - optional AI try-on on the user's own photo, using free
-//                          Hugging Face try-on demos. It never asks for an API key.
+//   "On my photo"        - AI try-on on the user's own photo through Google Gemini,
+//                          via our own server (server/gemini-tryon-worker.js), which
+//                          holds the key. The website never asks for an API key.
 // Users are never asked to type an API key (TA feedback): a key cannot be kept
 // safe inside a public website, and the request confused participants.
 
@@ -1715,36 +1716,9 @@ const RETIRED_STORAGE_KEYS = ["wearther_gemini_api_key", "wearther_preview_provi
 // Our own try-on service (server/gemini-tryon-worker.js on Cloudflare). It keeps the
 // Gemini key on the server, so users are never asked for one. Paste the worker's
 // address here after deploying it, e.g. "https://wear-ther-tryon.<name>.workers.dev".
-// Leave it empty to use only the free Hugging Face try-on below.
+// The address is not secret; the key itself is stored only in Cloudflare.
 const TRYON_PROXY_URL = "https://wear-ther-tryon.alawihend.workers.dev";
 const TRYON_PROXY_TIMEOUT_MS = 120000;
-
-// Gradio's official JavaScript client, loaded only when someone tries the AI view.
-const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
-const HF_STEP_TIMEOUT_MS = 90000;   // Longest wait for one clothing piece.
-const HF_TOTAL_TIMEOUT_MS = 240000; // Longest wait for the whole try-on.
-
-// Free try-on demos on Hugging Face, best first. If one is down, the next is tried.
-const HF_UPPER_BODY_SERVICES = [
-  { space: "yisol/IDM-VTON", kind: "idm" },
-  { space: "Nymbo/Virtual-Try-On", kind: "idm" },
-  { space: "levihsu/OOTDiffusion", kind: "ootd-upper" }
-];
-const HF_LOWER_BODY_SERVICES = [
-  { space: "levihsu/OOTDiffusion", kind: "ootd-lower" }
-];
-// Try-on models don't do shoes, so general image editors that take two pictures are used.
-const HF_SHOE_SERVICES = [
-  { space: "black-forest-labs/FLUX.2-dev", kind: "flux2-edit" },
-  { space: "Qwen/Qwen-Image-Edit-2511", kind: "qwen-edit" },
-  { space: "Qwen/Qwen-Image-Edit-2509", kind: "qwen-edit" }
-];
-const SHOE_EDIT_PROMPT =
-  "Image 1 shows a person. Image 2 shows a pair of shoes. Edit image 1 so the person is " +
-  "wearing the shoes from image 2, with the same color, style and details. Keep everything " +
-  "else in image 1 exactly the same: face, hair, body, pose, clothing, background, lighting and framing.";
-// Order the pieces are put on (shoes last, on the finished outfit).
-const HF_DRESSING_ORDER = ["top", "bottom", "outerwear", "shoes"];
 
 // Keep images small enough for localStorage and fast to upload.
 const USER_PHOTO_MAX_PX = 1024;
@@ -1818,28 +1792,6 @@ function splitDataUrl(dataUrl) {
   return match ? { mimeType: match[1], data: match[2] } : null;
 }
 
-function dataUrlToBlob(dataUrl) {
-  const parts = splitDataUrl(dataUrl);
-  const bytes = atob(parts.data);
-  const array = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) array[i] = bytes.charCodeAt(i);
-  return new Blob([array], { type: parts.mimeType });
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new PreviewError("Could not read the generated image."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-// Clothing photos may be files in assets/ or data URLs; turn either into a JPEG data URL.
-async function garmentToBlob(item) {
-  return dataUrlToBlob(await resizeToJpeg(item.image, GARMENT_MAX_PX));
-}
-
 // ---------- The outfit being previewed ----------
 // Uses the pieces chosen on Home (weather suggestion + any manual swaps).
 function getPreviewOutfit() {
@@ -1851,184 +1803,6 @@ function getPreviewOutfit() {
 
 function getOutfitKey(outfit) {
   return outfit.map(item => item.id).join("|");
-}
-
-// ---------- Free AI try-on through Hugging Face ----------
-const HF_QUOTA_MESSAGE =
-  "The free try-on service has used up its free time for now.";
-const HF_OFFLINE_MESSAGE =
-  "The free try-on service is busy or offline right now.";
-const HF_SLOW_MESSAGE =
-  "The free try-on service is taking too long right now.";
-
-let gradioClientPromise = null;
-function loadGradioClient() {
-  if (!gradioClientPromise) {
-    gradioClientPromise = import(GRADIO_CLIENT_URL).catch(() => {
-      gradioClientPromise = null; // Allow another try later.
-      throw new PreviewError("Could not connect to the free try-on service. Check your internet connection.");
-    });
-  }
-  return gradioClientPromise;
-}
-
-// Each demo has its own inputs; this builds the request for one clothing piece.
-function buildHfRequest(kind, person, garment, item, handle_file) {
-  if (kind === "idm") {
-    return {
-      endpoint: "/tryon",
-      payload: {
-        dict: { background: handle_file(person), layers: [], composite: null },
-        garm_img: handle_file(garment),
-        garment_des: `${item.color} ${item.name}`,
-        is_checked: true,       // Find the clothing area automatically.
-        is_checked_crop: false,
-        denoise_steps: 30,
-        seed: 42
-      },
-      pick: data => data[0]
-    };
-  }
-  // Image editors take a gallery: [{ image, caption }, ...] (person first, then shoes).
-  const gallery = [
-    { image: handle_file(person), caption: null },
-    { image: handle_file(garment), caption: null }
-  ];
-  if (kind === "flux2-edit") {
-    return {
-      endpoint: "/infer",
-      payload: {
-        prompt: SHOE_EDIT_PROMPT, input_images: gallery, seed: 0, randomize_seed: true,
-        width: 768, height: 1024, num_inference_steps: 20, guidance_scale: 4, prompt_upsampling: false
-      },
-      pick: data => data[0]
-    };
-  }
-  if (kind === "qwen-edit") {
-    return {
-      endpoint: "/infer",
-      payload: {
-        images: gallery, prompt: SHOE_EDIT_PROMPT, seed: 0, randomize_seed: true,
-        true_guidance_scale: 4, num_inference_steps: 20, height: 1024, width: 768, rewrite_prompt: false
-      },
-      pick: data => data[0][0].image
-    };
-  }
-  const common = { vton_img: handle_file(person), garm_img: handle_file(garment), n_samples: 1, n_steps: 20, image_scale: 2, seed: -1 };
-  const category = kind === "ootd-upper" ? "Upper-body" : "Lower-body";
-  return { endpoint: "/process_dc", payload: { ...common, category }, pick: data => data[0][0].image };
-}
-
-function isQuotaMessage(text) {
-  return /quota|exceeded|rate limit|too many requests/i.test(text);
-}
-
-// Status updates can carry a warning such as "ZeroGPU quota exceeded" without
-// being marked as an error, so read both the title and the message.
-function getStatusText(status) {
-  const message = typeof status.message === "string" ? status.message : JSON.stringify(status.message || "");
-  return [status.title, message].filter(Boolean).join(": ");
-}
-
-// Put one clothing piece on the person, trying each service until one works.
-async function runHfStep(gradio, services, person, garment, item, deadline, onStatus) {
-  let reason = "offline";
-  for (const service of services) {
-    const timeLeft = deadline - Date.now();
-    if (timeLeft <= 0) { reason = "slow"; break; }
-    try {
-      // Ask for "status" updates too (the client only sends "data" by default);
-      // they carry the queue position and warnings like "quota exceeded".
-      const client = await gradio.Client.connect(service.space, { events: ["data", "status"] });
-      const request = buildHfRequest(service.kind, person, garment, item, gradio.handle_file);
-      const job = client.submit(request.endpoint, request.payload);
-      let timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; if (job.cancel) job.cancel(); },
-        Math.min(HF_STEP_TIMEOUT_MS, timeLeft));
-
-      let data = null;
-      let lastStatusText = "";
-      try {
-        for await (const message of job) {
-          if (message.type === "status") {
-            const text = getStatusText(message);
-            if (text) lastStatusText = text;
-            if (message.stage === "error" || isQuotaMessage(text)) {
-              throw new Error(text || "The try-on service reported an error.");
-            }
-            onStatus(message);
-          } else if (message.type === "data") {
-            data = message.data;
-            break;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!data) throw new Error(timedOut ? "timed out" : lastStatusText || "No result.");
-
-      const file = request.pick(data);
-      const response = await fetch(file && (file.url || file.path));
-      if (!response.ok) throw new Error("Could not download the result.");
-      return await response.blob();
-    } catch (err) {
-      const text = String((err && (err.message || err.title)) || err);
-      if (isQuotaMessage(text)) reason = "quota";
-      else if (/timed out/.test(text) && reason !== "quota") reason = "slow";
-      console.warn(`Try-on with ${service.space} failed, trying the next service:`, text);
-    }
-  }
-  const error = new PreviewError(reason === "quota" ? HF_QUOTA_MESSAGE
-    : reason === "slow" ? HF_SLOW_MESSAGE : HF_OFFLINE_MESSAGE);
-  error.reason = reason;
-  throw error;
-}
-
-async function generateWithHuggingFace(userPhoto, outfit, onProgress) {
-  const steps = HF_DRESSING_ORDER
-    .map(category => outfit.find(item => item.category === category))
-    .filter(Boolean);
-  if (steps.length === 0) throw new PreviewError("This outfit has no clothing pieces to put on yet.");
-
-  onProgress("Connecting to the free try-on service…");
-  const gradio = await loadGradioClient();
-  const deadline = Date.now() + HF_TOTAL_TIMEOUT_MS;
-
-  let person = dataUrlToBlob(userPhoto.image);
-  const added = [];
-  const failed = [];
-  let lastError = null;
-
-  for (let i = 0; i < steps.length; i++) {
-    const item = steps[i];
-    const label = `Step ${i + 1} of ${steps.length}: putting on ${item.name}`;
-    onProgress(label + "…");
-    const services = item.category === "bottom" ? HF_LOWER_BODY_SERVICES
-      : item.category === "shoes" ? HF_SHOE_SERVICES
-      : HF_UPPER_BODY_SERVICES;
-    try {
-      const garment = await garmentToBlob(item);
-      person = await runHfStep(gradio, services, person, garment, item, deadline, status => {
-        const waiting = status.queue && typeof status.position === "number" && status.position > 0;
-        onProgress(label + (waiting ? ` (waiting in line, #${status.position + 1})…` : "…"));
-      });
-      added.push(item);
-    } catch (err) {
-      failed.push(item);  // Keep going: a partial try-on is more useful than none.
-      lastError = err;
-    }
-  }
-
-  if (added.length === 0) throw lastError || new PreviewError(HF_OFFLINE_MESSAGE);
-
-  const note = failed.length
-    ? `${failed.map(item => item.name).join(", ")} couldn't be added because ` +
-      (lastError && lastError.reason === "quota" ? "the free try-on time ran out"
-        : lastError && lastError.reason === "slow" ? "the free service was too slow"
-        : "the free service didn't respond") +
-      `. The "Full outfit" view shows every piece.`
-    : "";
-  return { image: await blobToDataUrl(person), note };
 }
 
 // ---------- Gemini try-on through our own server (no key in the website) ----------
@@ -2070,18 +1844,10 @@ async function generateWithGeminiProxy(userPhoto, outfit, onProgress) {
   throw error;
 }
 
-// Use our Gemini service when it is set up; otherwise (or if it is down) the free one.
+// The AI try-on always uses our Gemini service.
 async function generateTryOn(userPhoto, outfit, onProgress) {
-  if (!TRYON_PROXY_URL) return generateWithHuggingFace(userPhoto, outfit, onProgress);
-  try {
-    return await generateWithGeminiProxy(userPhoto, outfit, onProgress);
-  } catch (err) {
-    // A declined photo would be declined by the free service too; don't wait for it.
-    if (err.reason === "blocked" || err.reason === "bad_request") throw err;
-    console.warn("Gemini try-on failed, using the free service instead:", err.message);
-    onProgress("Gemini is unavailable right now, so the free try-on service is being used…");
-    return generateWithHuggingFace(userPhoto, outfit, onProgress);
-  }
+  if (!TRYON_PROXY_URL) throw new PreviewError("The try-on service isn't set up yet.");
+  return generateWithGeminiProxy(userPhoto, outfit, onProgress);
 }
 
 // ---------- Rendering the preview screen ----------
@@ -2237,9 +2003,8 @@ function renderVirtualPreview() {
   } else if (result && result.photoStamp === photo.stamp) {
     setPreviewPlaceholder("preview-person-icon", "Your outfit changed since the last try-on. Click Try It On My Photo to update it.");
   } else {
-    setPreviewPlaceholder("preview-person-icon", TRYON_PROXY_URL
-      ? "Click Try It On My Photo to see this outfit on you (AI, about 20–40 seconds)."
-      : "Click Try It On My Photo to see this outfit on you (free AI beta, about 1–2 minutes).");
+    setPreviewPlaceholder("preview-person-icon",
+      "Click Try It On My Photo to see this outfit on you (AI, about 20–40 seconds).");
   }
 
   // Buttons.

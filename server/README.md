@@ -7,8 +7,8 @@ person wearing the whole outfit (shoes included), and sends the image back.
 
 - Users are never asked for an API key, and the key is never in the website or on GitHub.
 - Only the Wear-ther site can use it (other websites are refused).
-- If it is not set up, or is down, the website automatically uses the free
-  Hugging Face try-on instead. The "Full outfit" view always works without it.
+- If it is down, the website shows a clear message; the "Full outfit" view (all four
+  pieces, no AI) always works without it.
 
 ## Cost
 Gemini image generation is **not free**: about **$0.03 per preview** (Nov 2026 pricing for
